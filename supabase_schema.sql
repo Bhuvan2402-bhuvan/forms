@@ -86,3 +86,23 @@ EXCEPTION
     WHEN OTHERS THEN
         RAISE NOTICE 'Realtime publication notice: %', SQLERRM;
 END $$;
+
+-- 6. Admin Authentication & Password Entity Table
+CREATE TABLE IF NOT EXISTS public.admin_auth (
+    id TEXT PRIMARY KEY DEFAULT 'admin_credential',
+    password_hash TEXT NOT NULL,
+    salt TEXT NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Enable RLS to prevent public access to admin credentials
+ALTER TABLE public.admin_auth ENABLE ROW LEVEL SECURITY;
+
+-- Allow backend service role full access; deny direct unauthenticated anonymous access
+DROP POLICY IF EXISTS "Restrict admin_auth to service role" ON public.admin_auth;
+CREATE POLICY "Restrict admin_auth to service role"
+    ON public.admin_auth
+    FOR ALL
+    USING (false)
+    WITH CHECK (false);
+

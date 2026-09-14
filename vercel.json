@@ -3,6 +3,8 @@
   "framework": null,
   "rewrites": [
     { "source": "/api/supabase/status", "destination": "/api/status.js" },
+    { "source": "/api/admin-auth", "destination": "/api/admin-auth.js" },
+    { "source": "/api/admin/:path*", "destination": "/api/admin-auth.js" },
     { "source": "/api/forms", "destination": "/api/forms.js" },
     { "source": "/api/submissions", "destination": "/api/submissions.js" },
     { "source": "/admin", "destination": "/index.html" },

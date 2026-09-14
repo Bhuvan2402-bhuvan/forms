@@ -86,17 +86,72 @@
 
       <!-- 0. ADMIN FORMS MANAGEMENT VIEW -->
       <section id="view-admin" class="view-panel">
-        <div class="admin-view-wrapper">
+        
+        <!-- Admin Login Passkey Gate -->
+        <div class="admin-lock-gate" id="admin-auth-gate">
+          <div class="admin-lock-card" id="admin-lock-card">
+            <div class="admin-lock-icon">
+              <i class="ri-shield-keyhole-line"></i>
+            </div>
+            <h2 class="admin-lock-title">Admin Portal Authentication</h2>
+            <p class="admin-lock-desc">
+              Please enter the administrator master password to manage forms, deadlines, and view respondent submissions.
+            </p>
+
+            <form class="admin-auth-form" id="admin-login-form" onsubmit="return false;">
+              <div class="admin-pwd-input-wrap">
+                <input 
+                  type="password" 
+                  id="admin-password-input" 
+                  placeholder="Enter administrator password..." 
+                  autocomplete="current-password"
+                  required 
+                />
+                <button type="button" class="admin-pwd-toggle-btn" id="btn-toggle-admin-password" title="Show/Hide password">
+                  <i class="ri-eye-line"></i>
+                </button>
+              </div>
+
+              <div class="admin-auth-error" id="admin-auth-error">
+                <i class="ri-error-warning-line"></i>
+                <span id="admin-auth-error-text">Invalid administrator password</span>
+              </div>
+
+              <button type="submit" class="btn btn-primary" id="btn-admin-login-submit" style="width:100%;padding:12px;font-size:0.95rem;justify-content:center;">
+                <i class="ri-lock-unlock-line"></i> Unlock Admin Dashboard
+              </button>
+            </form>
+
+            <div class="admin-auth-hint">
+              <i class="ri-information-line"></i>
+              <span>Default password is <code>admin123</code> (customizable in settings)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Authenticated Admin Content -->
+        <div class="admin-view-wrapper" id="admin-dashboard-content" style="display:none;">
           
           <div class="admin-header">
             <div>
-              <h2 style="font-size:1.6rem;font-weight:800;color:var(--text-main);">Forms & Applications Directory</h2>
-              <p style="font-size:0.9rem;color:var(--text-muted);margin-top:4px;">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+                <h2 style="font-size:1.6rem;font-weight:800;color:var(--text-main);margin:0;">Forms & Applications Directory</h2>
+                <span class="admin-auth-badge">
+                  <span class="admin-auth-dot"></span> Admin Authenticated
+                </span>
+              </div>
+              <p style="font-size:0.9rem;color:var(--text-muted);margin:0;">
                 Manage deadlines, toggle response intake, share unique public URLs, and oversee all active applications.
               </p>
             </div>
             
-            <div style="display:flex;gap:10px;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+              <button class="btn btn-outline" id="btn-admin-change-password">
+                <i class="ri-key-line"></i> Change Password
+              </button>
+              <button class="btn btn-outline" id="btn-admin-logout" title="Lock and exit admin portal" style="color:var(--danger);border-color:rgba(239,68,68,0.3);">
+                <i class="ri-logout-box-r-line"></i> Lock
+              </button>
               <button class="btn btn-outline" id="btn-admin-templates">
                 <i class="ri-layout-masonry-line"></i> Template Gallery
               </button>
@@ -619,6 +674,52 @@
         <div class="modal-footer">
           <button class="btn btn-outline" onclick="window.print()"><i class="ri-printer-line"></i> Print</button>
           <button class="btn btn-primary btn-close-modal">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin Change Password Modal -->
+    <div class="modal-overlay" id="admin-change-password-modal">
+      <div class="modal-window" style="max-width:460px;">
+        <div class="modal-header">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <i class="ri-shield-keyhole-line" style="color:var(--primary);font-size:1.3rem;"></i>
+            <h3 style="margin:0;">Update Admin Password</h3>
+          </div>
+          <button class="field-action-btn btn-close-modal"><i class="ri-close-line"></i></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:0.88rem;color:var(--text-muted);margin-bottom:18px;line-height:1.5;">
+            Change your administrator master password. This will update the security entity across sessions.
+          </p>
+
+          <form id="admin-change-password-form" onsubmit="return false;" style="display:flex;flex-direction:column;gap:14px;">
+            <div class="form-group">
+              <label style="font-size:0.82rem;font-weight:700;">Current Password</label>
+              <input type="password" id="admin-curr-pwd-input" class="form-control" placeholder="Enter current password..." required />
+            </div>
+
+            <div class="form-group">
+              <label style="font-size:0.82rem;font-weight:700;">New Password (min 6 characters)</label>
+              <input type="password" id="admin-new-pwd-input" class="form-control" placeholder="Enter new strong password..." minlength="6" required />
+            </div>
+
+            <div class="form-group">
+              <label style="font-size:0.82rem;font-weight:700;">Confirm New Password</label>
+              <input type="password" id="admin-confirm-pwd-input" class="form-control" placeholder="Re-enter new password..." minlength="6" required />
+            </div>
+
+            <div class="admin-auth-error" id="admin-change-pwd-error">
+              <i class="ri-error-warning-line"></i>
+              <span id="admin-change-pwd-error-text">Passwords do not match</span>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-close-modal">Cancel</button>
+          <button class="btn btn-primary" id="btn-save-new-admin-password">
+            <i class="ri-check-line"></i> Save Password
+          </button>
         </div>
       </div>
     </div>

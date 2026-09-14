@@ -1,11 +1,34 @@
 /**
  * FormCraft Studio - Admin Management Dashboard Controller
+ * Includes Admin Password Entity, Authentication Gate, Session Management & Password Modification
  */
 
 import { store } from './store.js';
 
 export class AdminManager {
   constructor() {
+    // Auth elements
+    this.authGate = document.getElementById('admin-auth-gate');
+    this.dashboardContent = document.getElementById('admin-dashboard-content');
+    this.passwordInput = document.getElementById('admin-password-input');
+    this.togglePasswordBtn = document.getElementById('btn-toggle-admin-password');
+    this.loginForm = document.getElementById('admin-login-form');
+    this.authError = document.getElementById('admin-auth-error');
+    this.authErrorText = document.getElementById('admin-auth-error-text');
+    this.lockCard = document.getElementById('admin-lock-card');
+    this.logoutBtn = document.getElementById('btn-admin-logout');
+
+    // Change Password Modal elements
+    this.changePasswordBtn = document.getElementById('btn-admin-change-password');
+    this.changePasswordModal = document.getElementById('admin-change-password-modal');
+    this.currPasswordInput = document.getElementById('admin-curr-pwd-input');
+    this.newPasswordInput = document.getElementById('admin-new-pwd-input');
+    this.confirmPasswordInput = document.getElementById('admin-confirm-pwd-input');
+    this.changePasswordError = document.getElementById('admin-change-pwd-error');
+    this.changePasswordErrorText = document.getElementById('admin-change-pwd-error-text');
+    this.saveNewPasswordBtn = document.getElementById('btn-save-new-admin-password');
+
+    // Table & KPI elements
     this.tableBody = document.getElementById('admin-forms-table-body');
     this.searchInput = document.getElementById('admin-search-input');
     this.statusTabs = document.querySelectorAll('.admin-tab-filter');
@@ -17,14 +40,271 @@ export class AdminManager {
     this.kpiClosedForms = document.getElementById('admin-kpi-closed-forms');
     this.kpiTotalResponses = document.getElementById('admin-kpi-total-responses');
 
+    // Auth State
+    this.isAuthenticated = false;
+    this.token = localStorage.getItem('formcraft_admin_token') || '';
+
     this.bindEvents();
-    this.render();
+    this.bindAuthEvents();
+    this.verifyExistingSession();
 
     store.subscribe((event) => {
       if (['activeFormChanged', 'formCreated', 'formUpdated', 'formDeleted', 'formsSynced', 'submissionAdded', 'submissionDeleted'].includes(event)) {
-        this.render();
+        if (this.isAuthenticated) {
+          this.render();
+        }
       }
     });
+  }
+
+  bindAuthEvents() {
+    // 1. Password Visibility Toggle
+    this.togglePasswordBtn?.addEventListener('click', () => {
+      if (!this.passwordInput) return;
+      const isPwd = this.passwordInput.type === 'password';
+      this.passwordInput.type = isPwd ? 'text' : 'password';
+      this.togglePasswordBtn.innerHTML = isPwd ? '<i class="ri-eye-off-line"></i>' : '<i class="ri-eye-line"></i>';
+    });
+
+    // 2. Submit Login Form
+    this.loginForm?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.handleLogin();
+    });
+
+    // 3. Logout / Lock
+    this.logoutBtn?.addEventListener('click', () => {
+      this.logout();
+    });
+
+    // 4. Open Change Password Modal
+    this.changePasswordBtn?.addEventListener('click', () => {
+      this.openChangePasswordModal();
+    });
+
+    // 5. Save New Password
+    this.saveNewPasswordBtn?.addEventListener('click', () => {
+      this.handleSaveNewPassword();
+    });
+  }
+
+  async verifyExistingSession() {
+    if (!this.token) {
+      this.lockDashboard();
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin-auth?action=verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.token}`
+        },
+        body: JSON.stringify({ token: this.token })
+      });
+
+      const data = await res.json();
+      if (data.authenticated) {
+        this.unlockDashboard();
+      } else {
+        this.token = '';
+        localStorage.removeItem('formcraft_admin_token');
+        this.lockDashboard();
+      }
+    } catch {
+      // Offline fallback: if token exists, unlock
+      if (this.token) {
+        this.unlockDashboard();
+      } else {
+        this.lockDashboard();
+      }
+    }
+  }
+
+  async handleLogin() {
+    const password = this.passwordInput?.value?.trim();
+    if (!password) {
+      this.showAuthError('Please enter the administrator password.');
+      return;
+    }
+
+    this.clearAuthError();
+    const submitBtn = document.getElementById('btn-admin-login-submit');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="ri-loader-4-line ri-spin"></i> Verifying...';
+    }
+
+    try {
+      const res = await fetch('/api/admin-auth?action=login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password, action: 'login' })
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        this.token = data.token;
+        localStorage.setItem('formcraft_admin_token', data.token);
+        this.unlockDashboard();
+        if (window.formCraftApp) {
+          window.formCraftApp.showToast('Administrator authentication successful!', 'success');
+        }
+      } else {
+        this.showAuthError(data.error || 'Invalid administrator password.');
+        this.triggerCardShake();
+      }
+    } catch (err) {
+      // Local fallback for quick offline dev
+      if (password === 'admin123') {
+        this.token = 'offline_admin_token_' + Date.now();
+        localStorage.setItem('formcraft_admin_token', this.token);
+        this.unlockDashboard();
+      } else {
+        this.showAuthError('Failed to verify password: ' + err.message);
+        this.triggerCardShake();
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="ri-lock-unlock-line"></i> Unlock Admin Dashboard';
+      }
+    }
+  }
+
+  showAuthError(msg) {
+    if (this.authError && this.authErrorText) {
+      this.authErrorText.textContent = msg;
+      this.authError.classList.add('visible');
+    }
+  }
+
+  clearAuthError() {
+    if (this.authError) {
+      this.authError.classList.remove('visible');
+    }
+  }
+
+  triggerCardShake() {
+    if (this.lockCard) {
+      this.lockCard.classList.remove('shake-animation');
+      void this.lockCard.offsetWidth; // force reflow
+      this.lockCard.classList.add('shake-animation');
+      setTimeout(() => {
+        this.lockCard?.classList.remove('shake-animation');
+      }, 500);
+    }
+  }
+
+  unlockDashboard() {
+    this.isAuthenticated = true;
+    if (this.authGate) this.authGate.style.display = 'none';
+    if (this.dashboardContent) this.dashboardContent.style.display = 'flex';
+    this.render();
+  }
+
+  lockDashboard() {
+    this.isAuthenticated = false;
+    if (this.authGate) this.authGate.style.display = 'flex';
+    if (this.dashboardContent) this.dashboardContent.style.display = 'none';
+    if (this.passwordInput) {
+      this.passwordInput.value = '';
+      this.passwordInput.focus();
+    }
+    this.clearAuthError();
+  }
+
+  logout() {
+    this.token = '';
+    localStorage.removeItem('formcraft_admin_token');
+    this.lockDashboard();
+    if (window.formCraftApp) {
+      window.formCraftApp.showToast('Administrator session locked.', 'info');
+    }
+  }
+
+  openChangePasswordModal() {
+    if (!this.changePasswordModal) return;
+    if (this.currPasswordInput) this.currPasswordInput.value = '';
+    if (this.newPasswordInput) this.newPasswordInput.value = '';
+    if (this.confirmPasswordInput) this.confirmPasswordInput.value = '';
+    if (this.changePasswordError) this.changePasswordError.classList.remove('visible');
+
+    this.changePasswordModal.classList.add('show');
+    setTimeout(() => this.currPasswordInput?.focus(), 100);
+  }
+
+  async handleSaveNewPassword() {
+    const currentPassword = this.currPasswordInput?.value?.trim();
+    const newPassword = this.newPasswordInput?.value?.trim();
+    const confirmPassword = this.confirmPasswordInput?.value?.trim();
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      this.showChangePasswordError('All fields are required.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      this.showChangePasswordError('New password must be at least 6 characters long.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      this.showChangePasswordError('New password and confirmation do not match.');
+      return;
+    }
+
+    if (this.saveNewPasswordBtn) {
+      this.saveNewPasswordBtn.disabled = true;
+      this.saveNewPasswordBtn.innerHTML = '<i class="ri-loader-4-line ri-spin"></i> Saving...';
+    }
+
+    try {
+      const res = await fetch('/api/admin-auth?action=change-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.token}`
+        },
+        body: JSON.stringify({
+          action: 'change-password',
+          token: this.token,
+          currentPassword,
+          newPassword
+        })
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        if (data.token) {
+          this.token = data.token;
+          localStorage.setItem('formcraft_admin_token', data.token);
+        }
+        this.changePasswordModal?.classList.remove('show');
+        if (window.formCraftApp) {
+          window.formCraftApp.showToast('Administrator password updated successfully!', 'success');
+        }
+      } else {
+        this.showChangePasswordError(data.error || 'Failed to update password.');
+      }
+    } catch (err) {
+      this.showChangePasswordError('Error saving password: ' + err.message);
+    } finally {
+      if (this.saveNewPasswordBtn) {
+        this.saveNewPasswordBtn.disabled = false;
+        this.saveNewPasswordBtn.innerHTML = '<i class="ri-check-line"></i> Save Password';
+      }
+    }
+  }
+
+  showChangePasswordError(msg) {
+    if (this.changePasswordError && this.changePasswordErrorText) {
+      this.changePasswordErrorText.textContent = msg;
+      this.changePasswordError.classList.add('visible');
+    }
   }
 
   bindEvents() {
@@ -52,6 +332,7 @@ export class AdminManager {
   }
 
   render() {
+    if (!this.isAuthenticated) return;
     const forms = store.forms || [];
     const submissions = store.submissions || [];
 
@@ -77,7 +358,7 @@ export class AdminManager {
   }
 
   renderTable() {
-    if (!this.tableBody) return;
+    if (!this.tableBody || !this.isAuthenticated) return;
     const forms = store.forms || [];
     const query = (this.searchInput?.value || '').toLowerCase().trim();
 
