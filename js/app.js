@@ -79,21 +79,33 @@ class App {
   }
 
   setupTheme() {
-    const themeToggleBtn = document.getElementById('btn-theme-toggle');
+    const getBtns = () => [
+      document.getElementById('btn-theme-toggle'),
+      document.getElementById('btn-public-theme-toggle')
+    ].filter(Boolean);
+
     const savedTheme = localStorage.getItem('formcraft_dark_theme') || 'light';
+
+    const updateBtns = (theme) => {
+      getBtns().forEach(btn => {
+        btn.innerHTML = theme === 'dark' ? '<i class="ri-sun-line"></i>' : '<i class="ri-moon-line"></i>';
+      });
+    };
 
     if (savedTheme === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
-      if (themeToggleBtn) themeToggleBtn.innerHTML = '<i class="ri-sun-line"></i>';
+      updateBtns('dark');
     }
 
-    themeToggleBtn?.addEventListener('click', () => {
-      const current = document.documentElement.getAttribute('data-theme');
-      const next = current === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('formcraft_dark_theme', next);
-      themeToggleBtn.innerHTML = next === 'dark' ? '<i class="ri-sun-line"></i>' : '<i class="ri-moon-line"></i>';
-      this.showToast(`Switched to ${next} mode`, 'info');
+    getBtns().forEach(btn => {
+      btn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('formcraft_dark_theme', next);
+        updateBtns(next);
+        this.showToast(`Switched to ${next} mode`, 'info');
+      });
     });
   }
 
