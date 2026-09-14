@@ -48,8 +48,17 @@ function verifySessionToken(token) {
   }
 }
 
+// In-memory cache for fast verification
+let memCredential = null;
+
 async function getStoredCredential() {
+  if (memCredential && memCredential.password_hash && memCredential.salt) {
+    return memCredential;
+  }
+
   const baseUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1`;
+
+  // 1. Check admin_auth table
   try {
     const res = await fetch(`${baseUrl}/admin_auth?id=eq.admin_credential&select=*`, {
       headers: {
@@ -60,18 +69,73 @@ async function getStoredCredential() {
     });
     if (res.ok) {
       const rows = await res.json();
-      if (Array.isArray(rows) && rows.length > 0) {
+      if (Array.isArray(rows) && rows.length > 0 && rows[0].password_hash) {
+        memCredential = rows[0];
         return rows[0];
       }
     }
   } catch (err) {
-    console.error('Error fetching admin_auth from Supabase:', err.message);
+    // Ignore error
   }
+
+  // 2. Query forms table system row '__system_admin_auth__'
+  try {
+    const res = await fetch(`${baseUrl}/forms?id=eq.__system_admin_auth__&select=*`, {
+      headers: {
+        'apikey': SUPABASE_SECRET_KEY,
+        'Authorization': `Bearer ${SUPABASE_SECRET_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        const cred = rows[0].theme;
+        if (cred && cred.password_hash && cred.salt) {
+          memCredential = cred;
+          return cred;
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore error
+  }
+
   return null;
 }
 
 async function saveStoredCredential(passwordHash, salt) {
+  memCredential = { password_hash: passwordHash, salt, updated_at: new Date().toISOString() };
   const baseUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1`;
+  let saved = false;
+
+  // 1. Save to forms table under __system_admin_auth__
+  try {
+    const res = await fetch(`${baseUrl}/forms`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_SECRET_KEY,
+        'Authorization': `Bearer ${SUPABASE_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=representation'
+      },
+      body: JSON.stringify({
+        id: '__system_admin_auth__',
+        title: '[System Admin Auth]',
+        category: '__system__',
+        theme: {
+          password_hash: passwordHash,
+          salt: salt,
+          updated_at: new Date().toISOString()
+        }
+      })
+    });
+    if (res.ok) saved = true;
+  } catch (err) {
+    console.error('Error saving __system_admin_auth__ to Supabase:', err.message);
+  }
+
+  // 2. Also save to admin_auth table if available
   try {
     const res = await fetch(`${baseUrl}/admin_auth`, {
       method: 'POST',
@@ -88,11 +152,12 @@ async function saveStoredCredential(passwordHash, salt) {
         updated_at: new Date().toISOString()
       })
     });
-    return res.ok;
-  } catch (err) {
-    console.error('Error saving admin_auth to Supabase:', err.message);
-    return false;
+    if (res.ok) saved = true;
+  } catch {
+    // Ignore error
   }
+
+  return saved;
 }
 
 export default async function handler(req, res) {

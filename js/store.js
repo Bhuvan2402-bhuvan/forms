@@ -51,7 +51,7 @@ class FormStore {
         const remoteForms = await res.json();
         if (Array.isArray(remoteForms) && remoteForms.length > 0) {
           // Merge remote forms with local
-          const remoteMapped = remoteForms.map(rf => ({
+          const remoteMapped = remoteForms.filter(rf => !rf.id?.startsWith('__system_')).map(rf => ({
             id: rf.id,
             title: rf.title,
             description: rf.description,

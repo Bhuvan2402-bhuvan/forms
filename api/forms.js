@@ -21,7 +21,8 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const response = await fetch(`${baseUrl}/forms?select=*&order=updated_at.desc`, { headers });
       const data = await response.json();
-      return res.status(response.ok ? 200 : response.status).json(data);
+      const userForms = Array.isArray(data) ? data.filter(f => !f.id?.startsWith('__system_')) : data;
+      return res.status(response.ok ? 200 : response.status).json(userForms);
     }
 
     if (req.method === 'POST') {

@@ -158,27 +158,91 @@ const server = http.createServer(async (req, res) => {
     const payload = await getRequestBody(req);
     const action = parsedUrl.searchParams.get('action') || payload.action || (pathname.endsWith('/login') ? 'login' : pathname.endsWith('/change-password') ? 'change-password' : 'verify');
 
+    // In-memory cache
+    if (!global.memAdminCredential) global.memAdminCredential = null;
+    const credFilePath = path.join(__dirname, '.admin_credential.json');
+
     // Helper functions for credential entity
     async function getStoredCredential() {
-      const result = await callSupabaseRest('admin_auth?id=eq.admin_credential&select=*');
-      if (result.ok && Array.isArray(result.data) && result.data.length > 0) {
-        return result.data[0];
+      if (global.memAdminCredential && global.memAdminCredential.password_hash) {
+        return global.memAdminCredential;
       }
+
+      // Check local file backup
+      if (fs.existsSync(credFilePath)) {
+        try {
+          const fileData = JSON.parse(fs.readFileSync(credFilePath, 'utf8'));
+          if (fileData.password_hash && fileData.salt) {
+            global.memAdminCredential = fileData;
+            return fileData;
+          }
+        } catch {}
+      }
+
+      // 1. Check admin_auth table
+      try {
+        const result = await callSupabaseRest('admin_auth?id=eq.admin_credential&select=*');
+        if (result.ok && Array.isArray(result.data) && result.data.length > 0 && result.data[0].password_hash) {
+          global.memAdminCredential = result.data[0];
+          return result.data[0];
+        }
+      } catch {}
+
+      // 2. Query forms table system row '__system_admin_auth__'
+      try {
+        const sysResult = await callSupabaseRest('forms?id=eq.__system_admin_auth__&select=*');
+        if (sysResult.ok && Array.isArray(sysResult.data) && sysResult.data.length > 0) {
+          const cred = sysResult.data[0].theme;
+          if (cred && cred.password_hash && cred.salt) {
+            global.memAdminCredential = cred;
+            return cred;
+          }
+        }
+      } catch {}
+
       return null;
     }
 
     async function saveStoredCredential(passwordHash, salt) {
-      const result = await callSupabaseRest('admin_auth', {
-        method: 'POST',
-        prefer: 'resolution=merge-duplicates,return=representation',
-        body: {
-          id: 'admin_credential',
-          password_hash: passwordHash,
-          salt,
-          updated_at: new Date().toISOString()
-        }
-      });
-      return result.ok;
+      const cred = { password_hash: passwordHash, salt, updated_at: new Date().toISOString() };
+      global.memAdminCredential = cred;
+
+      // Save to local file
+      try {
+        fs.writeFileSync(credFilePath, JSON.stringify(cred, null, 2), 'utf8');
+      } catch {}
+
+      // 1. Save to forms table system row
+      try {
+        await callSupabaseRest('forms', {
+          method: 'POST',
+          prefer: 'resolution=merge-duplicates,return=representation',
+          body: {
+            id: '__system_admin_auth__',
+            title: '[System Admin Auth]',
+            category: '__system__',
+            theme: cred
+          }
+        });
+      } catch (err) {
+        console.error('Error saving system admin auth to Supabase forms:', err);
+      }
+
+      // 2. Also try admin_auth table
+      try {
+        await callSupabaseRest('admin_auth', {
+          method: 'POST',
+          prefer: 'resolution=merge-duplicates,return=representation',
+          body: {
+            id: 'admin_credential',
+            password_hash: passwordHash,
+            salt,
+            updated_at: cred.updated_at
+          }
+        });
+      } catch {}
+
+      return true;
     }
 
     // Verify session
@@ -323,8 +387,9 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET') {
       const result = await callSupabaseRest('forms?select=*&order=updated_at.desc');
+      const userForms = Array.isArray(result.data) ? result.data.filter(f => !f.id?.startsWith('__system_')) : result.data;
       res.writeHead(result.ok ? 200 : (result.status || 500));
-      res.end(JSON.stringify(result.data));
+      res.end(JSON.stringify(userForms));
       return;
     }
 
