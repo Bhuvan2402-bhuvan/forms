@@ -48,11 +48,14 @@ function verifySessionToken(token) {
   }
 }
 
-// In-memory cache for fast verification
+// In-memory cache for fast verification with 10s TTL
 let memCredential = null;
+let lastCredFetch = 0;
+const CRED_CACHE_TTL_MS = 10000;
 
 async function getStoredCredential() {
-  if (memCredential && memCredential.password_hash && memCredential.salt) {
+  const now = Date.now();
+  if (memCredential && (now - lastCredFetch < CRED_CACHE_TTL_MS)) {
     return memCredential;
   }
 
@@ -71,6 +74,7 @@ async function getStoredCredential() {
       const rows = await res.json();
       if (Array.isArray(rows) && rows.length > 0 && rows[0].password_hash) {
         memCredential = rows[0];
+        lastCredFetch = now;
         return rows[0];
       }
     }
@@ -93,6 +97,7 @@ async function getStoredCredential() {
         const cred = rows[0].theme;
         if (cred && cred.password_hash && cred.salt) {
           memCredential = cred;
+          lastCredFetch = now;
           return cred;
         }
       }
@@ -101,11 +106,14 @@ async function getStoredCredential() {
     // Ignore error
   }
 
+  memCredential = null;
+  lastCredFetch = now;
   return null;
 }
 
 async function saveStoredCredential(passwordHash, salt) {
   memCredential = { password_hash: passwordHash, salt, updated_at: new Date().toISOString() };
+  lastCredFetch = Date.now();
   const baseUrl = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1`;
   let saved = false;
 

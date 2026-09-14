@@ -158,13 +158,16 @@ const server = http.createServer(async (req, res) => {
     const payload = await getRequestBody(req);
     const action = parsedUrl.searchParams.get('action') || payload.action || (pathname.endsWith('/login') ? 'login' : pathname.endsWith('/change-password') ? 'change-password' : 'verify');
 
-    // In-memory cache
+    // In-memory cache with 10s TTL
     if (!global.memAdminCredential) global.memAdminCredential = null;
+    if (!global.lastAdminCredFetch) global.lastAdminCredFetch = 0;
+    const CRED_CACHE_TTL_MS = 10000;
     const credFilePath = path.join(__dirname, '.admin_credential.json');
 
     // Helper functions for credential entity
     async function getStoredCredential() {
-      if (global.memAdminCredential && global.memAdminCredential.password_hash) {
+      const now = Date.now();
+      if (global.memAdminCredential && (now - global.lastAdminCredFetch < CRED_CACHE_TTL_MS)) {
         return global.memAdminCredential;
       }
 
@@ -174,6 +177,7 @@ const server = http.createServer(async (req, res) => {
           const fileData = JSON.parse(fs.readFileSync(credFilePath, 'utf8'));
           if (fileData.password_hash && fileData.salt) {
             global.memAdminCredential = fileData;
+            global.lastAdminCredFetch = now;
             return fileData;
           }
         } catch {}
@@ -184,6 +188,7 @@ const server = http.createServer(async (req, res) => {
         const result = await callSupabaseRest('admin_auth?id=eq.admin_credential&select=*');
         if (result.ok && Array.isArray(result.data) && result.data.length > 0 && result.data[0].password_hash) {
           global.memAdminCredential = result.data[0];
+          global.lastAdminCredFetch = now;
           return result.data[0];
         }
       } catch {}
@@ -195,17 +200,21 @@ const server = http.createServer(async (req, res) => {
           const cred = sysResult.data[0].theme;
           if (cred && cred.password_hash && cred.salt) {
             global.memAdminCredential = cred;
+            global.lastAdminCredFetch = now;
             return cred;
           }
         }
       } catch {}
 
+      global.memAdminCredential = null;
+      global.lastAdminCredFetch = now;
       return null;
     }
 
     async function saveStoredCredential(passwordHash, salt) {
       const cred = { password_hash: passwordHash, salt, updated_at: new Date().toISOString() };
       global.memAdminCredential = cred;
+      global.lastAdminCredFetch = Date.now();
 
       // Save to local file
       try {
