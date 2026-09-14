@@ -462,7 +462,8 @@ const server = http.createServer(async (req, res) => {
 
 function startServer(port) {
   server.listen(port, () => {
-    console.log(`FormCraft Studio server running at http://localhost:${port}`);
+    console.log(`Forms by Varunya tech server running at http://localhost:${port}`);
+    console.log(`All rights reserved to Bhuvana Mohan Chowdary.`);
     console.log(`Supabase URL: ${SUPABASE_URL || 'Not configured'}`);
   }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {

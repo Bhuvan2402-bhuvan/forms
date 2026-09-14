@@ -1,7 +1,8 @@
 {
-  "name": "formcraft-studio",
+  "name": "forms-by-varunya-tech",
   "version": "1.0.0",
-  "description": "Next-Gen Form & Application Builder",
+  "description": "Forms by Varunya tech. All rights reserved to Bhuvana Mohan Chowdary.",
+  "author": "Bhuvana Mohan Chowdary",
   "scripts": {
     "dev": "node server.js"
   }

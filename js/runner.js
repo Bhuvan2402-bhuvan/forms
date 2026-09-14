@@ -668,6 +668,7 @@ export class FormRunner {
     if (this.runnerProgress) this.runnerProgress.style.display = 'none';
 
     if (this.successView) {
+      const isStandalone = document.body.classList.contains('standalone-respondent-mode');
       this.successView.classList.add('show');
       this.successView.innerHTML = `
         <div class="success-icon-badge">
@@ -681,9 +682,12 @@ export class FormRunner {
           <div style="font-size:0.75rem;font-weight:700;color:var(--text-light);margin-bottom:6px;text-transform:uppercase;">Submission Reference ID</div>
           <div class="reference-code-box">${submission.id.toUpperCase()}</div>
         </div>
-        <div style="display:flex;gap:12px;margin-top:10px;">
-          <button class="btn btn-outline" id="btn-submit-another"><i class="ri-refresh-line"></i> Submit Another</button>
-          <button class="btn btn-primary" id="btn-view-analytics"><i class="ri-bar-chart-box-line"></i> View in Analytics</button>
+        <div style="display:flex;gap:12px;margin-top:10px;justify-content:center;">
+          <button class="btn btn-outline" id="btn-submit-another"><i class="ri-refresh-line"></i> Submit Another Response</button>
+          ${!isStandalone ? '<button class="btn btn-primary" id="btn-view-analytics"><i class="ri-bar-chart-box-line"></i> View in Analytics</button>' : ''}
+        </div>
+        <div style="margin-top:24px;padding-top:14px;border-top:1px solid var(--border-light);font-size:0.75rem;color:var(--text-light);">
+          Forms by Varunya tech • All rights reserved to Bhuvana Mohan Chowdary.
         </div>
       `;
 
