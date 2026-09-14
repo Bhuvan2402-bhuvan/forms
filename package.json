@@ -1,0 +1,8 @@
+{
+  "name": "formcraft-studio",
+  "version": "1.0.0",
+  "description": "Next-Gen Form & Application Builder",
+  "scripts": {
+    "dev": "node server.js"
+  }
+}

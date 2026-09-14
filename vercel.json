@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/api/supabase/status", "destination": "/api/status.js" },
+    { "source": "/api/forms", "destination": "/api/forms.js" },
+    { "source": "/api/submissions", "destination": "/api/submissions.js" },
+    { "source": "/admin", "destination": "/index.html" },
+    { "source": "/f/:path*", "destination": "/index.html" },
+    { "source": "/form/:path*", "destination": "/index.html" }
+  ]
+}

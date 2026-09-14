@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FormCraft Studio | Next-Gen Form & Application Builder</title>
+  <meta name="description" content="Build, customize, publish, and analyze powerful multi-step forms and applications with digital signatures, real-time validation, and rich analytics." />
+  
+  <!-- Modern Font & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='25' fill='%236366f1'/><path d='M30 40h40M30 55h25M30 70h35' stroke='white' stroke-width='8' stroke-linecap='round'/></svg>" />
+</head>
+<body>
+  <div id="app">
+    <!-- Top Navigation Bar -->
+    <header class="top-navbar">
+      <div class="nav-left">
+        <div class="brand-logo" id="brand-logo-btn">
+          <div class="logo-badge">
+            <i class="ri-survey-line"></i>
+          </div>
+          <span class="logo-text">FormCraft Studio</span>
+        </div>
+
+        <div class="active-form-selector" id="active-form-selector-btn" title="Switch or Manage Forms">
+          <i class="ri-folder-shared-line" style="color:var(--primary);"></i>
+          <span id="active-form-name-label">Senior Software Engineer Application</span>
+          <i class="ri-arrow-down-s-line" style="font-size:0.8rem;color:var(--text-light);"></i>
+        </div>
+      </div>
+
+      <nav class="nav-center">
+        <button class="nav-tab-btn" data-view="admin">
+          <i class="ri-dashboard-line"></i>
+          <span>Admin</span>
+        </button>
+        <button class="nav-tab-btn active" data-view="builder">
+          <i class="ri-tools-line"></i>
+          <span>Builder</span>
+        </button>
+        <button class="nav-tab-btn" data-view="runner">
+          <i class="ri-play-circle-line"></i>
+          <span>Live Runner</span>
+        </button>
+        <button class="nav-tab-btn" data-view="analytics">
+          <i class="ri-bar-chart-2-line"></i>
+          <span>Responses & Analytics</span>
+          <span class="badge" id="nav-responses-badge">Live</span>
+        </button>
+        <button class="nav-tab-btn" data-view="templates">
+          <i class="ri-layout-masonry-line"></i>
+          <span>Templates</span>
+        </button>
+      </nav>
+
+      <div class="nav-right">
+        <button class="btn btn-outline" id="btn-supabase-modal" title="Supabase Cloud Sync & Settings">
+          <i class="ri-database-2-line" id="supabase-status-icon" style="color:var(--success);"></i>
+          <span id="supabase-nav-label">Supabase</span>
+        </button>
+
+        <div class="status-pill">
+          <div class="status-indicator"></div>
+          <span>Auto-saved</span>
+        </div>
+
+        <button class="btn btn-outline" id="btn-share-form" title="Share Form / Get Embed Code">
+          <i class="ri-share-forward-line"></i>
+          <span>Share</span>
+        </button>
+
+        <button class="btn btn-outline btn-icon-only" id="btn-open-schema" title="Export / Import Schema JSON">
+          <i class="ri-code-s-slash-line"></i>
+        </button>
+
+        <button class="btn btn-outline btn-icon-only" id="btn-theme-toggle" title="Toggle Light / Dark Mode">
+          <i class="ri-moon-line"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Views Area -->
+    <main style="flex:1;display:flex;overflow:hidden;position:relative;">
+
+      <!-- 0. ADMIN FORMS MANAGEMENT VIEW -->
+      <section id="view-admin" class="view-panel">
+        <div class="admin-view-wrapper">
+          
+          <div class="admin-header">
+            <div>
+              <h2 style="font-size:1.6rem;font-weight:800;color:var(--text-main);">Forms & Applications Directory</h2>
+              <p style="font-size:0.9rem;color:var(--text-muted);margin-top:4px;">
+                Manage deadlines, toggle response intake, share unique public URLs, and oversee all active applications.
+              </p>
+            </div>
+            
+            <div style="display:flex;gap:10px;">
+              <button class="btn btn-outline" id="btn-admin-templates">
+                <i class="ri-layout-masonry-line"></i> Template Gallery
+              </button>
+              <button class="btn btn-primary" id="btn-admin-new-form">
+                <i class="ri-add-line"></i> Create New Form
+              </button>
+            </div>
+          </div>
+
+          <!-- Admin KPI Metrics Cards -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Total Forms</span>
+                <div class="kpi-icon"><i class="ri-survey-line"></i></div>
+              </div>
+              <div class="kpi-value" id="admin-kpi-total-forms">0</div>
+              <div class="kpi-trend" style="color:var(--primary);"><i class="ri-stack-line"></i> In repository</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Accepting Responses</span>
+                <div class="kpi-icon" style="background:rgba(16, 185, 129, 0.1);color:var(--success);"><i class="ri-checkbox-circle-line"></i></div>
+              </div>
+              <div class="kpi-value" id="admin-kpi-active-forms">0</div>
+              <div class="kpi-trend" style="color:var(--success);"><i class="ri-check-line"></i> Open for submissions</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Closed / Expired</span>
+                <div class="kpi-icon" style="background:rgba(239, 68, 68, 0.1);color:var(--danger);"><i class="ri-lock-line"></i></div>
+              </div>
+              <div class="kpi-value" id="admin-kpi-closed-forms">0</div>
+              <div class="kpi-trend" style="color:var(--danger);"><i class="ri-time-line"></i> Submissions blocked</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Total Responses</span>
+                <div class="kpi-icon" style="background:rgba(14, 165, 233, 0.1);color:var(--secondary);"><i class="ri-inbox-archive-line"></i></div>
+              </div>
+              <div class="kpi-value" id="admin-kpi-total-responses">0</div>
+              <div class="kpi-trend" style="color:var(--secondary);"><i class="ri-bar-chart-fill"></i> Across all forms</div>
+            </div>
+          </div>
+
+          <!-- Forms Directory Table -->
+          <div class="data-table-container">
+            <div class="data-table-header admin-filter-bar">
+              <div class="admin-status-tabs">
+                <button class="admin-tab-filter active" data-status="all">All Forms</button>
+                <button class="admin-tab-filter" data-status="active">Accepting Responses</button>
+                <button class="admin-tab-filter" data-status="closed">Closed / Expired</button>
+              </div>
+
+              <div class="search-input-box" style="width:300px;">
+                <i class="ri-search-line" style="color:var(--text-light);"></i>
+                <input type="text" id="admin-search-input" placeholder="Search forms by name, ID..." />
+              </div>
+            </div>
+
+            <div style="overflow-x:auto;">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>Form Title & Structure</th>
+                    <th>Accepting Responses</th>
+                    <th>End Time / Deadline</th>
+                    <th>Submissions</th>
+                    <th>Unique Public Link</th>
+                    <th style="text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-forms-table-body">
+                  <!-- Dynamically rendered rows by admin.js -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- 1. BUILDER STUDIO VIEW -->
+      <section id="view-builder" class="view-panel active">
+        <div class="studio-container">
+          
+          <!-- Left Palette & Steps Sidebar -->
+          <aside class="palette-sidebar">
+            <div class="palette-section">
+              <div class="palette-title">
+                <span>Application Flow</span>
+                <button class="btn btn-outline" id="btn-add-step" style="padding:2px 8px;font-size:0.75rem;">+ Step</button>
+              </div>
+              
+              <div class="toggle-switch-row" style="margin-bottom:10px;padding:0;">
+                <span style="font-size:0.8rem;font-weight:600;color:var(--text-muted);">Multi-Step Flow</span>
+                <label class="switch">
+                  <input type="checkbox" id="toggle-multi-step" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="step-nav-list" id="studio-step-nav">
+                <!-- Dynamically populated steps -->
+              </div>
+            </div>
+
+            <div class="palette-section" style="flex:1;">
+              <div class="palette-title">
+                <span>Add Question / Field</span>
+              </div>
+              <div class="field-grid" id="field-palette-items">
+                <!-- Dynamically populated field types -->
+              </div>
+            </div>
+          </aside>
+
+          <!-- Center Canvas Viewport -->
+          <div class="canvas-viewport">
+            <div class="form-canvas-card">
+              <div class="canvas-header-banner"></div>
+              
+              <div class="canvas-header-content">
+                <input type="text" id="form-title-input" class="form-title-input" placeholder="Form or Application Title..." />
+                <textarea id="form-desc-input" class="form-desc-input" placeholder="Add an introductory message, instructions, or grant/role guidelines..."></textarea>
+              </div>
+
+              <!-- Step indicator bar if multi-step -->
+              <div class="canvas-step-bar" id="canvas-step-bar"></div>
+
+              <!-- Fields list -->
+              <div class="canvas-fields-container" id="canvas-fields">
+                <!-- Rendered fields -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Properties Inspector -->
+          <aside class="inspector-sidebar">
+            <div class="inspector-tabs">
+              <button class="inspector-tab-btn active" data-pane="inspector-field-pane">
+                <i class="ri-edit-line"></i> Field Settings
+              </button>
+              <button class="inspector-tab-btn" data-pane="inspector-theme-pane">
+                <i class="ri-palette-line"></i> Design & Theme
+              </button>
+              <button class="inspector-tab-btn" data-pane="inspector-settings-pane">
+                <i class="ri-time-line"></i> Access & Deadline
+              </button>
+            </div>
+
+            <!-- Field Settings Tab -->
+            <div class="inspector-pane active" id="inspector-field-pane">
+              <!-- Dynamically populated based on selected field -->
+            </div>
+
+            <!-- Global Theme Settings Tab -->
+            <div class="inspector-pane" id="inspector-theme-pane">
+              <div class="form-group">
+                <label>Primary Brand Color</label>
+                <div class="color-palette-grid">
+                  <button class="color-swatch-btn selected" data-color="#6366f1" style="background:#6366f1;"></button>
+                  <button class="color-swatch-btn" data-color="#0d9488" style="background:#0d9488;"></button>
+                  <button class="color-swatch-btn" data-color="#0ea5e9" style="background:#0ea5e9;"></button>
+                  <button class="color-swatch-btn" data-color="#8b5cf6" style="background:#8b5cf6;"></button>
+                  <button class="color-swatch-btn" data-color="#ec4899" style="background:#ec4899;"></button>
+                  <button class="color-swatch-btn" data-color="#f59e0b" style="background:#f59e0b;"></button>
+                  <button class="color-swatch-btn" data-color="#10b981" style="background:#10b981;"></button>
+                  <button class="color-swatch-btn" data-color="#e11d48" style="background:#e11d48;"></button>
+                  <button class="color-swatch-btn" data-color="#0284c7" style="background:#0284c7;"></button>
+                  <button class="color-swatch-btn" data-color="#334155" style="background:#334155;"></button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Typography Preset</label>
+                <select id="theme-font-select" class="form-control">
+                  <option value="'Plus Jakarta Sans', sans-serif">Plus Jakarta Sans (Modern & Clean)</option>
+                  <option value="'Inter', sans-serif">Inter (Corporate & Neutral)</option>
+                  <option value="'Outfit', sans-serif">Outfit (Bold & Friendly)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Corner Radius Style</label>
+                <select id="theme-radius-select" class="form-control">
+                  <option value="6px">Sharp (6px)</option>
+                  <option value="12px">Rounded (12px)</option>
+                  <option value="18px" selected>Smooth Curved (18px)</option>
+                  <option value="26px">Pill / High Curve (26px)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Theme Surface Style</label>
+                <select class="form-control" disabled>
+                  <option>Glassmorphism & Soft Elevation</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Form Access & Deadline Settings Tab -->
+            <div class="inspector-pane" id="inspector-settings-pane">
+              <!-- Dynamically populated by builder.js renderSettingsPane -->
+            </div>
+
+          </aside>
+
+        </div>
+      </section>
+
+      <!-- 2. LIVE RUNNER / PREVIEW VIEW -->
+      <section id="view-runner" class="view-panel">
+        <div class="runner-view-wrapper">
+          
+          <div class="runner-toolbar">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-weight:700;font-size:0.85rem;color:var(--text-muted);"><i class="ri-eye-line"></i> RESPONDENT VIEW</span>
+            </div>
+
+            <div class="device-switcher">
+              <button class="device-btn active" data-device="desktop">
+                <i class="ri-macbook-line"></i> Desktop
+              </button>
+              <button class="device-btn" data-device="tablet">
+                <i class="ri-tablet-line"></i> Tablet
+              </button>
+              <button class="device-btn" data-device="mobile">
+                <i class="ri-smartphone-line"></i> Mobile
+              </button>
+            </div>
+
+            <div>
+              <span class="status-pill"><i class="ri-shield-check-line" style="color:var(--success);"></i> Live Validation Active</span>
+            </div>
+          </div>
+
+          <div class="runner-stage" id="runner-stage">
+            <div class="runner-card" id="runner-card">
+              <div class="runner-card-banner"></div>
+              
+              <div class="runner-header" id="runner-header">
+                <!-- Dynamically rendered -->
+              </div>
+
+              <div class="runner-progress-wrapper" id="runner-progress">
+                <!-- Dynamically rendered progress bar -->
+              </div>
+
+              <form id="runner-fields-form" class="runner-fields-form" onsubmit="return false;">
+                <!-- Dynamically rendered active step fields -->
+              </form>
+
+              <!-- Footer with Previous, Next, and Submit buttons -->
+              <div class="runner-footer" id="runner-footer">
+                <!-- Dynamically rendered buttons -->
+              </div>
+
+              <!-- Success Celebration Screen -->
+              <div class="submission-success-view" id="submission-success-view">
+                <!-- Success content upon submission -->
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- 3. RESPONSES & ANALYTICS VIEW -->
+      <section id="view-analytics" class="view-panel">
+        <div class="analytics-view-wrapper">
+          
+          <div class="analytics-header">
+            <div class="analytics-title">
+              <h2>Responses & Application Analytics</h2>
+              <p>Review real-time submissions, candidate details, signatures, and export reports.</p>
+            </div>
+            
+            <div style="display:flex;gap:10px;">
+              <button class="btn btn-outline" id="btn-export-csv">
+                <i class="ri-file-excel-2-line"></i> Export CSV
+              </button>
+              <button class="btn btn-outline" id="btn-export-json">
+                <i class="ri-download-2-line"></i> Export JSON
+              </button>
+            </div>
+          </div>
+
+          <!-- KPI Metrics Cards -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Total Submissions</span>
+                <div class="kpi-icon"><i class="ri-user-follow-line"></i></div>
+              </div>
+              <div class="kpi-value" id="kpi-total-subs">0</div>
+              <div class="kpi-trend"><i class="ri-arrow-up-line"></i> +12% this week</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Avg Completion Time</span>
+                <div class="kpi-icon"><i class="ri-timer-line"></i></div>
+              </div>
+              <div class="kpi-value" id="kpi-avg-time">2m 45s</div>
+              <div class="kpi-trend" style="color:var(--text-muted);"><i class="ri-check-line"></i> Optimal pacing</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Completion Rate</span>
+                <div class="kpi-icon"><i class="ri-percent-line"></i></div>
+              </div>
+              <div class="kpi-value" id="kpi-completion-rate">94%</div>
+              <div class="kpi-trend"><i class="ri-arrow-up-line"></i> Low abandonment</div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-card-header">
+                <span>Latest Submission</span>
+                <div class="kpi-icon"><i class="ri-time-line"></i></div>
+              </div>
+              <div class="kpi-value" id="kpi-latest-time">--:--</div>
+              <div class="kpi-trend" style="color:var(--text-muted);"><i class="ri-cloud-line"></i> Synced to storage</div>
+            </div>
+          </div>
+
+          <!-- Submissions Table -->
+          <div class="data-table-container">
+            <div class="data-table-header">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <h3 style="font-size:1.05rem;font-weight:700;">Submissions Inbox</h3>
+                <span class="badge-tag" id="submissions-count-badge">0 responses</span>
+              </div>
+
+              <div class="search-input-box">
+                <i class="ri-search-line" style="color:var(--text-light);"></i>
+                <input type="text" id="analytics-search-input" placeholder="Search applicant, answer, ID..." />
+              </div>
+            </div>
+
+            <div style="overflow-x:auto;">
+              <table class="submissions-table">
+                <thead>
+                  <tr>
+                    <th>Submission ID</th>
+                    <th>Date & Time</th>
+                    <th>Key Responses Preview</th>
+                    <th>Time Spent</th>
+                    <th style="text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="submissions-table-body">
+                  <!-- Dynamically populated rows -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- 4. TEMPLATES VIEW -->
+      <section id="view-templates" class="view-panel">
+        <div class="templates-view-wrapper">
+          <div class="templates-hero">
+            <h2>Ready-Made Applications & Forms</h2>
+            <p>Pick a crafted template designed for job hiring, fellowship grants, event registrations, or customer feedback to get started in seconds.</p>
+          </div>
+
+          <div class="templates-grid" id="templates-grid">
+            <!-- Dynamically populated template cards -->
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Modals Container -->
+
+    <!-- Form Switcher / Manager Modal -->
+    <div class="modal-overlay" id="forms-manager-modal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h3>Your Forms & Applications</h3>
+          <button class="field-action-btn btn-close-modal"><i class="ri-close-line"></i></button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex;flex-direction:column;gap:10px;" id="forms-manager-list">
+            <!-- Forms list -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-close-modal">Close</button>
+          <button class="btn btn-primary" id="btn-create-blank-form">
+            <i class="ri-add-line"></i> Create Blank Form
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Share & Embed Modal -->
+    <div class="modal-overlay" id="share-modal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h3>Share Form & Embed</h3>
+          <button class="field-action-btn btn-close-modal"><i class="ri-close-line"></i></button>
+        </div>
+        <div class="modal-body" style="display:flex;flex-direction:column;gap:18px;">
+          <div class="form-group">
+            <label>Public Shareable Link</label>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="share-link-input" class="form-control" readonly />
+              <button class="btn btn-primary" id="btn-copy-link"><i class="ri-file-copy-line"></i> Copy</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>HTML Embed Code (iframe)</label>
+            <textarea id="embed-code-area" class="form-control" rows="3" readonly style="font-family:var(--font-mono);font-size:0.8rem;"></textarea>
+            <button class="btn btn-outline" id="btn-copy-embed" style="margin-top:6px;align-self:flex-start;">
+              <i class="ri-code-line"></i> Copy Embed Code
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-close-modal">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Schema JSON Export / Import Modal -->
+    <div class="modal-overlay" id="schema-modal">
+      <div class="modal-window" style="max-width:680px;">
+        <div class="modal-header">
+          <h3>Form Schema JSON (Import / Export)</h3>
+          <button class="field-action-btn btn-close-modal"><i class="ri-close-line"></i></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">
+            Copy or modify the JSON definition below. You can paste any valid FormCraft schema to import it immediately.
+          </p>
+          <textarea id="schema-json-area" class="form-control" rows="12" style="font-family:var(--font-mono);font-size:0.82rem;line-height:1.4;"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-close-modal">Cancel</button>
+          <button class="btn btn-primary" id="btn-import-schema">
+            <i class="ri-download-cloud-2-line"></i> Import JSON Schema
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Supabase Cloud Integration Modal -->
+    <div class="modal-overlay" id="supabase-modal">
+      <div class="modal-window" style="max-width:640px;">
+        <div class="modal-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="logo-badge" style="width:30px;height:30px;font-size:1.1rem;background:#3ecf8e;">
+              <i class="ri-database-2-line"></i>
+            </div>
+            <h3>Supabase Cloud Integration</h3>
+          </div>
+          <button class="field-action-btn btn-close-modal"><i class="ri-close-line"></i></button>
+        </div>
+        <div class="modal-body" style="display:flex;flex-direction:column;gap:16px;">
+          <div style="background:var(--bg-subtle);padding:14px;border-radius:var(--radius-md);border:1px solid var(--border-light);display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;">Connected Project URL</span>
+              <span class="badge-tag" id="supabase-modal-badge" style="background:rgba(16, 185, 129, 0.15);color:var(--success);">Connected</span>
+            </div>
+            <code style="font-size:0.85rem;font-family:var(--font-mono);color:var(--primary);word-break:break-all;" id="supabase-url-display">https://brfhqgdvyqustbjndrex.supabase.co</code>
+          </div>
+
+          <div id="supabase-schema-alert" style="background:rgba(99, 102, 241, 0.08);border:1px solid rgba(99, 102, 241, 0.2);padding:14px;border-radius:var(--radius-md);">
+            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--primary);margin-bottom:6px;">
+              <i class="ri-information-line"></i>
+              <span>One-Time PostgreSQL Setup</span>
+            </div>
+            <p style="font-size:0.83rem;color:var(--text-muted);line-height:1.5;">
+              To enable cloud persistence for your forms and responses, execute the database schema in your Supabase SQL Editor.
+            </p>
+            <div style="display:flex;gap:10px;margin-top:10px;">
+              <button class="btn btn-primary" id="btn-copy-sql" style="font-size:0.8rem;padding:6px 12px;">
+                <i class="ri-file-copy-line"></i> Copy SQL Schema
+              </button>
+              <a href="https://supabase.com/dashboard/project/brfhqgdvyqustbjndrex/sql" target="_blank" rel="noopener" class="btn btn-outline" style="font-size:0.8rem;padding:6px 12px;">
+                <i class="ri-external-link-line"></i> Open Supabase SQL Editor
+              </a>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>SQL Schema Preview (forms & submissions tables)</label>
+            <textarea id="supabase-sql-preview" class="form-control" rows="6" readonly style="font-family:var(--font-mono);font-size:0.78rem;line-height:1.4;"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline btn-close-modal">Close</button>
+          <button class="btn btn-primary" id="btn-check-supabase-sync">
+            <i class="ri-refresh-line"></i> Test & Sync Now
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Submission Inspection Modal -->
+    <div class="modal-overlay" id="submission-detail-modal">
+      <div class="modal-window" style="max-width:640px;">
+        <div class="modal-header">
+          <h3>Submission Record Details</h3>
+          <button class="field-action-btn btn-close-modal"><i class="ri-close-line"></i></button>
+        </div>
+        <div class="modal-body" id="submission-detail-content">
+          <!-- Populated dynamically -->
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="window.print()"><i class="ri-printer-line"></i> Print</button>
+          <button class="btn btn-primary btn-close-modal">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Canvas for Confetti particles -->
+    <canvas id="confetti-canvas"></canvas>
+
+  </div>
+
+  <!-- App Main ES Module -->
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+server.js
+.env
+.gitignore
+supabase_schema.sql
