@@ -32,11 +32,11 @@
       </div>
 
       <nav class="nav-center">
-        <button class="nav-tab-btn" data-view="admin">
+        <button class="nav-tab-btn active" data-view="admin">
           <i class="ri-dashboard-line"></i>
           <span>Admin</span>
         </button>
-        <button class="nav-tab-btn active" data-view="builder">
+        <button class="nav-tab-btn" data-view="builder">
           <i class="ri-tools-line"></i>
           <span>Builder</span>
         </button>
@@ -56,6 +56,12 @@
       </nav>
 
       <div class="nav-right">
+        <!-- Admin Locked Notice (visible when logged out) -->
+        <div class="admin-locked-pill" id="nav-admin-locked-indicator" title="Admin Authentication Required">
+          <i class="ri-shield-keyhole-line"></i>
+          <span>Admin Locked</span>
+        </div>
+
         <button class="btn btn-outline" id="btn-supabase-modal" title="Supabase Cloud Sync & Settings">
           <i class="ri-database-2-line" id="supabase-status-icon" style="color:var(--success);"></i>
           <span id="supabase-nav-label">Supabase</span>
@@ -78,6 +84,12 @@
         <button class="btn btn-outline btn-icon-only" id="btn-theme-toggle" title="Toggle Light / Dark Mode">
           <i class="ri-moon-line"></i>
         </button>
+
+        <!-- Navbar Logout Button (visible when authenticated) -->
+        <button class="btn btn-outline" id="btn-navbar-logout" title="Lock & Logout Admin Session" style="display:none;color:var(--danger);border-color:rgba(239,68,68,0.3);">
+          <i class="ri-logout-box-r-line"></i>
+          <span>Lock</span>
+        </button>
       </div>
     </header>
 
@@ -85,7 +97,7 @@
     <main style="flex:1;display:flex;overflow:hidden;position:relative;">
 
       <!-- 0. ADMIN FORMS MANAGEMENT VIEW -->
-      <section id="view-admin" class="view-panel">
+      <section id="view-admin" class="view-panel active">
         
         <!-- Admin Login Passkey Gate -->
         <div class="admin-lock-gate" id="admin-auth-gate">
@@ -238,7 +250,7 @@
       </section>
 
       <!-- 1. BUILDER STUDIO VIEW -->
-      <section id="view-builder" class="view-panel active">
+      <section id="view-builder" class="view-panel">
         <div class="studio-container">
           
           <!-- Left Palette & Steps Sidebar -->

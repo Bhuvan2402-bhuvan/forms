@@ -2182,3 +2182,45 @@ body.standalone-respondent-mode .runner-card {
   animation: authShake 0.4s ease-in-out;
 }
 
+/* ==========================================================================
+   ADMIN ACCESS ENFORCEMENT & RESTRICTION
+   ========================================================================== */
+.admin-locked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* When NOT authenticated (and not in public respondent mode):
+   Hide ALL creator functions: Builder, Live Runner, Responses & Analytics, Templates, Form Selector, Share, Cloud sync */
+body:not(.admin-authenticated):not(.standalone-respondent-mode) .nav-center,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #active-form-selector-btn,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #btn-supabase-modal,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) .status-pill,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #btn-share-form,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #btn-open-schema,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #btn-navbar-logout,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #view-builder,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #view-runner,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #view-analytics,
+body:not(.admin-authenticated):not(.standalone-respondent-mode) #view-templates {
+  display: none !important;
+}
+
+/* When authenticated: hide the locked indicator and reveal the navbar logout */
+body.admin-authenticated #nav-admin-locked-indicator {
+  display: none !important;
+}
+
+body.admin-authenticated #btn-navbar-logout {
+  display: inline-flex !important;
+}
+

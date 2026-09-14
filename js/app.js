@@ -72,8 +72,8 @@ class App {
       return;
     }
 
-    // 2. Admin route (/admin)
-    if (pathname === '/admin' || pathname === '/admin/') {
+    // 2. Default route (any non-form route lands in admin view)
+    if (!targetFormId) {
       document.querySelector('.nav-tab-btn[data-view="admin"]')?.click();
     }
   }
@@ -100,11 +100,21 @@ class App {
   setupNavigation() {
     const tabs = document.querySelectorAll('.nav-tab-btn');
     tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
+      tab.addEventListener('click', (e) => {
+        const viewName = tab.getAttribute('data-view');
+
+        // Security Guard: Prevent navigating to creator tools if not authenticated
+        if (viewName !== 'admin' && this.admin && !this.admin.isAuthenticated && !document.body.classList.contains('standalone-respondent-mode')) {
+          e.preventDefault();
+          this.showToast('Please log in with the administrator password to access studio tools.', 'warning');
+          document.querySelector('.nav-tab-btn[data-view="admin"]')?.click();
+          this.admin.triggerCardShake();
+          return;
+        }
+
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
 
-        const viewName = tab.getAttribute('data-view');
         document.querySelectorAll('.view-panel').forEach(panel => {
           panel.classList.remove('active');
         });
@@ -126,6 +136,10 @@ class App {
           this.admin.render();
         }
       });
+    });
+
+    document.getElementById('brand-logo-btn')?.addEventListener('click', () => {
+      document.querySelector('.nav-tab-btn[data-view="admin"]')?.click();
     });
   }
 

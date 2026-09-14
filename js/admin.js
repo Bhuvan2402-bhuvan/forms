@@ -77,6 +77,10 @@ export class AdminManager {
       this.logout();
     });
 
+    document.getElementById('btn-navbar-logout')?.addEventListener('click', () => {
+      this.logout();
+    });
+
     // 4. Open Change Password Modal
     this.changePasswordBtn?.addEventListener('click', () => {
       this.openChangePasswordModal();
@@ -200,6 +204,7 @@ export class AdminManager {
 
   unlockDashboard() {
     this.isAuthenticated = true;
+    document.body.classList.add('admin-authenticated');
     if (this.authGate) this.authGate.style.display = 'none';
     if (this.dashboardContent) this.dashboardContent.style.display = 'flex';
     this.render();
@@ -207,6 +212,7 @@ export class AdminManager {
 
   lockDashboard() {
     this.isAuthenticated = false;
+    document.body.classList.remove('admin-authenticated');
     if (this.authGate) this.authGate.style.display = 'flex';
     if (this.dashboardContent) this.dashboardContent.style.display = 'none';
     if (this.passwordInput) {
@@ -214,6 +220,12 @@ export class AdminManager {
       this.passwordInput.focus();
     }
     this.clearAuthError();
+
+    // Force active tab and panel back to admin view
+    document.querySelectorAll('.nav-tab-btn').forEach(t => t.classList.remove('active'));
+    document.querySelector('.nav-tab-btn[data-view="admin"]')?.classList.add('active');
+    document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('view-admin')?.classList.add('active');
   }
 
   logout() {
