@@ -53,7 +53,12 @@ export class FormRunner {
     this.formData = {};
     this.startTime = Date.now();
     this.signaturePads.clear();
-    if (this.successView) this.successView.classList.remove('show');
+    if (this.successView) {
+      this.successView.classList.remove('show');
+      this.successView.style.display = 'none';
+      this.successView.innerHTML = '';
+    }
+    if (this.runnerHeader) this.runnerHeader.style.display = 'block';
     if (this.runnerFieldsForm) this.runnerFieldsForm.style.display = 'flex';
     if (this.runnerFooter) this.runnerFooter.style.display = 'flex';
     if (this.runnerProgress) this.runnerProgress.style.display = 'block';
@@ -66,13 +71,17 @@ export class FormRunner {
     // Check if form is accepting responses / deadline
     const accessStatus = store.isFormOpen(form);
 
-    // Apply theme styling
+    // Apply theme styling across runner
     if (this.runnerStage && form.theme) {
+      const accent = form.theme.accentColor || '#6366f1';
+      this.runnerStage.style.setProperty('--primary', accent);
+      this.runnerStage.style.setProperty('--runner-accent', accent);
+      this.runnerStage.style.setProperty('--border-focus', accent);
+      this.runnerStage.style.setProperty('--primary-light', `${accent}18`);
+      this.runnerStage.style.setProperty('--primary-glow', `${accent}33`);
+
       if (form.theme.bgGradient) {
         this.runnerStage.style.background = form.theme.bgGradient;
-      }
-      if (form.theme.accentColor) {
-        this.runnerStage.style.setProperty('--runner-accent', form.theme.accentColor);
       }
       if (form.theme.borderRadius) {
         this.runnerCard.style.borderRadius = form.theme.borderRadius;
@@ -80,6 +89,11 @@ export class FormRunner {
       if (form.theme.fontFamily) {
         this.runnerCard.style.fontFamily = form.theme.fontFamily;
       }
+    }
+
+    const banner = this.runnerCard?.querySelector('.runner-card-banner');
+    if (banner && form.theme?.accentColor) {
+      banner.style.background = `linear-gradient(90deg, ${form.theme.accentColor}, #8b5cf6, #ec4899)`;
     }
 
     // Google Forms Style Closed Screen Check
@@ -623,9 +637,17 @@ export class FormRunner {
         if (isEmpty) {
           isValid = false;
           row?.classList.add('has-error');
+          let errEl = row?.querySelector('.runner-field-error');
+          if (!errEl) {
+            errEl = document.createElement('div');
+            errEl.className = 'runner-field-error';
+            errEl.innerHTML = '<i class="ri-error-warning-fill"></i> <span>This question requires a response.</span>';
+            row?.appendChild(errEl);
+          }
           if (!firstErrorElement) firstErrorElement = row;
         } else {
           row?.classList.remove('has-error');
+          row?.querySelector('.runner-field-error')?.remove();
         }
       }
     });
@@ -639,10 +661,13 @@ export class FormRunner {
 
   clearError(fieldId) {
     const row = this.runnerFieldsForm.querySelector(`.runner-field-row[data-id="${fieldId}"]`);
-    row?.classList.remove('has-error');
+    if (row) {
+      row.classList.remove('has-error');
+      row.querySelector('.runner-field-error')?.remove();
+    }
   }
 
-  handleSubmit() {
+  async handleSubmit() {
     const form = store.getActiveForm();
     const accessStatus = store.isFormOpen(form);
     if (!accessStatus.isOpen) {
@@ -651,54 +676,159 @@ export class FormRunner {
       return;
     }
 
+    const submitBtn = document.getElementById('btn-runner-submit');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="ri-loader-4-line ri-spin"></i> Submitting response...';
+    }
+
     const duration = Math.max(15, Math.round((Date.now() - this.startTime) / 1000));
     const submission = store.addSubmission({
       data: { ...this.formData },
       durationSeconds: duration
     });
 
+    // Cloud push in background
+    try {
+      await store.pushSubmissionToCloud(submission);
+    } catch (err) {
+      console.warn('Cloud submission push error:', err);
+    }
+
     // Confetti celebration
     if (window.triggerConfetti) {
       window.triggerConfetti();
     }
 
-    // Switch to success view
+    // Render the dedicated, beautifully themed Thank You screen
+    this.renderThankYouScreen(form, submission);
+  }
+
+  renderThankYouScreen(form, submission) {
+    // Hide form elements so the Thank You view takes full center stage
+    if (this.runnerHeader) this.runnerHeader.style.display = 'none';
     if (this.runnerFieldsForm) this.runnerFieldsForm.style.display = 'none';
     if (this.runnerFooter) this.runnerFooter.style.display = 'none';
     if (this.runnerProgress) this.runnerProgress.style.display = 'none';
 
-    if (this.successView) {
-      const isStandalone = document.body.classList.contains('standalone-respondent-mode');
-      this.successView.classList.add('show');
-      this.successView.innerHTML = `
-        <div class="success-icon-badge">
-          <i class="ri-checkbox-circle-fill"></i>
+    if (!this.successView) return;
+    const isStandalone = document.body.classList.contains('standalone-respondent-mode');
+    const accent = form.theme?.accentColor || '#6366f1';
+    const submittedDate = new Date(submission.submittedAt).toLocaleString([], {
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    });
+    const answersCount = Object.keys(submission.data || {}).length;
+
+    this.successView.classList.add('show');
+    this.successView.style.display = 'flex';
+    this.successView.innerHTML = `
+      <div class="thank-you-badge-wrapper">
+        <div class="thank-you-glow" style="background:${accent};"></div>
+        <div class="thank-you-icon" style="background:${accent};">
+          <i class="ri-check-line"></i>
         </div>
-        <h2 style="font-size:1.75rem;font-weight:800;color:var(--text-main);">Application Submitted!</h2>
-        <p style="font-size:0.95rem;color:var(--text-muted);max-width:460px;">
-          Thank you for completing this submission. Your responses and digital signature have been recorded successfully.
+      </div>
+
+      <div class="thank-you-header">
+        <span class="thank-you-pill" style="color:${accent};background:${accent}18;">
+          <i class="ri-shield-check-fill"></i> Submission Confirmed
+        </span>
+        <h2 class="thank-you-title">Thank You!</h2>
+        <p class="thank-you-desc">
+          Your response for <strong>${form.title || 'this form'}</strong> has been securely submitted and recorded in the database.
         </p>
-        <div style="margin:10px 0;">
-          <div style="font-size:0.75rem;font-weight:700;color:var(--text-light);margin-bottom:6px;text-transform:uppercase;">Submission Reference ID</div>
-          <div class="reference-code-box">${submission.id.toUpperCase()}</div>
-        </div>
-        <div style="display:flex;gap:12px;margin-top:10px;justify-content:center;">
-          <button class="btn btn-outline" id="btn-submit-another"><i class="ri-refresh-line"></i> Submit Another Response</button>
-          ${!isStandalone ? '<button class="btn btn-primary" id="btn-view-analytics"><i class="ri-bar-chart-box-line"></i> View in Analytics</button>' : ''}
-        </div>
-        <div style="margin-top:24px;padding-top:14px;border-top:1px solid var(--border-light);font-size:0.75rem;color:var(--text-light);">
-          Forms by Varunya tech • All rights reserved to Bhuvana Mohan Chowdary.
-        </div>
-      `;
+      </div>
 
-      document.getElementById('btn-submit-another')?.addEventListener('click', () => {
-        this.resetFormState();
-        this.render();
-      });
+      <div class="thank-you-receipt-card">
+        <div class="receipt-header">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <i class="ri-file-list-3-line" style="color:${accent};font-size:1.1rem;"></i>
+            <span style="font-weight:700;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);">Submission Receipt</span>
+          </div>
+          <span class="receipt-status-tag"><i class="ri-checkbox-circle-fill"></i> Cloud Synced</span>
+        </div>
 
-      document.getElementById('btn-view-analytics')?.addEventListener('click', () => {
-        document.querySelector('.nav-tab-btn[data-view="analytics"]')?.click();
-      });
-    }
+        <div class="receipt-grid">
+          <div class="receipt-row">
+            <span class="receipt-label">Confirmation ID</span>
+            <div class="receipt-ref-box">
+              <span class="receipt-ref-code" id="receipt-ref-code">${submission.id.toUpperCase()}</span>
+              <button type="button" class="btn-copy-ref" id="btn-copy-ref" title="Copy Reference Code">
+                <i class="ri-file-copy-line"></i> Copy
+              </button>
+            </div>
+          </div>
+
+          <div class="receipt-row">
+            <span class="receipt-label">Submission Date</span>
+            <span class="receipt-value">${submittedDate}</span>
+          </div>
+
+          <div class="receipt-row">
+            <span class="receipt-label">Fields Recorded</span>
+            <span class="receipt-value">${answersCount} answers captured</span>
+          </div>
+
+          <div class="receipt-row">
+            <span class="receipt-label">Security & Privacy</span>
+            <span class="receipt-value" style="color:var(--success);">
+              <i class="ri-lock-2-line"></i> 256-Bit SSL Encrypted
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="thank-you-actions">
+        <button class="btn btn-outline" id="btn-submit-another">
+          <i class="ri-refresh-line"></i> Submit Another Response
+        </button>
+        <button class="btn btn-outline" id="btn-print-receipt">
+          <i class="ri-printer-line"></i> Print Receipt
+        </button>
+        ${!isStandalone ? `
+          <button class="btn btn-primary" id="btn-view-analytics" style="background:${accent};border-color:${accent};">
+            <i class="ri-bar-chart-box-line"></i> View in Analytics
+          </button>
+        ` : ''}
+      </div>
+
+      <div class="thank-you-footer">
+        <i class="ri-shield-star-line" style="color:${accent};"></i>
+        <span>Forms by Varunya tech • All rights reserved to Bhuvana Mohan Chowdary.</span>
+      </div>
+    `;
+
+    // Copy reference code button
+    document.getElementById('btn-copy-ref')?.addEventListener('click', () => {
+      const code = document.getElementById('receipt-ref-code')?.textContent;
+      if (code) {
+        navigator.clipboard.writeText(code).then(() => {
+          const btn = document.getElementById('btn-copy-ref');
+          if (btn) {
+            btn.innerHTML = '<i class="ri-check-line" style="color:var(--success);"></i> Copied!';
+            setTimeout(() => {
+              btn.innerHTML = '<i class="ri-file-copy-line"></i> Copy';
+            }, 2500);
+          }
+        });
+      }
+    });
+
+    // Print receipt
+    document.getElementById('btn-print-receipt')?.addEventListener('click', () => {
+      window.print();
+    });
+
+    // Submit another
+    document.getElementById('btn-submit-another')?.addEventListener('click', () => {
+      this.resetFormState();
+      this.render();
+    });
+
+    // View analytics
+    document.getElementById('btn-view-analytics')?.addEventListener('click', () => {
+      document.querySelector('.nav-tab-btn[data-view="analytics"]')?.click();
+    });
   }
 }

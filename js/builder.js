@@ -19,17 +19,44 @@ export class FormBuilder {
     this.themeInspectorPane = document.getElementById('inspector-theme-pane');
     this.settingsInspectorPane = document.getElementById('inspector-settings-pane');
     this.activeInspectorPane = 'inspector-field-pane';
+    this.currentInspectedFieldId = null;
+    this.pendingRender = false;
 
     this.initPalette();
     this.bindEvents();
     this.render();
 
-    // Listen to store changes
+    // Listen to store changes with typing guard
     store.subscribe((event) => {
       if (['activeFormChanged', 'formCreated', 'formImported', 'formUpdated', 'fieldAdded', 'fieldUpdated', 'fieldDuplicated', 'fieldDeleted', 'fieldsReordered', 'stepAdded', 'stepDeleted', 'themeUpdated'].includes(event)) {
+        if (this.isUserTyping()) {
+          this.pendingRender = true;
+          return;
+        }
         this.render();
       }
     });
+
+    // When focus leaves an input inside the builder, catch up any pending renders
+    document.getElementById('view-builder')?.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (!this.isUserTyping() && this.pendingRender) {
+          this.pendingRender = false;
+          this.render();
+        }
+      }, 120);
+    });
+  }
+
+  isUserTyping() {
+    const activeEl = document.activeElement;
+    if (!activeEl) return false;
+    const tag = activeEl.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      const builder = document.getElementById('view-builder');
+      return !!(builder && builder.contains(activeEl));
+    }
+    return false;
   }
 
   initPalette() {
@@ -54,13 +81,37 @@ export class FormBuilder {
   }
 
   bindEvents() {
-    // Form title & description
+    // Form title & description with instant top-bar sync and debounced cloud push
     this.formTitleInput?.addEventListener('input', (e) => {
-      store.updateFormMeta({ title: e.target.value });
+      const activeLabel = document.getElementById('active-form-name-label');
+      if (activeLabel) activeLabel.textContent = e.target.value || 'Untitled Form';
+      const form = store.getActiveForm();
+      if (form) {
+        form.title = e.target.value;
+        store.saveForms(true, false); // debounced cloud push
+      }
+    });
+
+    this.formTitleInput?.addEventListener('blur', () => {
+      const form = store.getActiveForm();
+      if (form) {
+        store.saveForms(true, true); // immediate cloud commit on blur
+      }
     });
 
     this.formDescInput?.addEventListener('input', (e) => {
-      store.updateFormMeta({ description: e.target.value });
+      const form = store.getActiveForm();
+      if (form) {
+        form.description = e.target.value;
+        store.saveForms(true, false); // debounced cloud push
+      }
+    });
+
+    this.formDescInput?.addEventListener('blur', () => {
+      const form = store.getActiveForm();
+      if (form) {
+        store.saveForms(true, true); // immediate cloud commit on blur
+      }
     });
 
     // Inspector tab switching
@@ -127,6 +178,12 @@ export class FormBuilder {
   render() {
     const form = store.getActiveForm();
     if (!form) return;
+
+    // Critical focus protection: if user is typing, defer re-rendering until blur
+    if (this.isUserTyping()) {
+      this.pendingRender = true;
+      return;
+    }
 
     // Header inputs
     if (this.formTitleInput && document.activeElement !== this.formTitleInput) {
@@ -234,6 +291,12 @@ export class FormBuilder {
 
   renderCanvasFields(form) {
     if (!this.canvasFieldsContainer) return;
+
+    // If user is actively typing anywhere in builder studio, do not re-render and lose focus
+    if (this.isUserTyping()) {
+      return;
+    }
+
     this.canvasFieldsContainer.innerHTML = '';
 
     // Filter fields belonging to current step if multi-step
@@ -270,8 +333,15 @@ export class FormBuilder {
         </div>
 
         <div class="field-label-container">
-          <span class="field-label-text">${field.label || 'Untitled Question'}</span>
+          <input 
+            type="text" 
+            class="canvas-field-label-input" 
+            value="${(field.label || '').replace(/"/g, '&quot;')}" 
+            placeholder="Untitled Question (Click to rename)..."
+            title="Click to rename question / column"
+          />
           ${field.required ? '<span class="required-asterisk">*</span>' : ''}
+          <i class="ri-edit-2-line label-rename-hint" title="Rename question"></i>
         </div>
 
         ${field.helpText ? `<div class="field-help-text">${field.helpText}</div>` : ''}
@@ -284,8 +354,41 @@ export class FormBuilder {
       // Select field on card click
       fieldCard.addEventListener('click', (e) => {
         if (e.target.closest('.field-action-btn')) return;
-        store.selectedFieldId = field.id;
-        this.render();
+        if (e.target.classList.contains('canvas-field-label-input')) return;
+        if (store.selectedFieldId !== field.id) {
+          store.selectedFieldId = field.id;
+          this.canvasFieldsContainer.querySelectorAll('.canvas-field-item').forEach(c => {
+            c.classList.toggle('selected', c.getAttribute('data-id') === field.id);
+          });
+          this.renderInspector(form);
+        }
+      });
+
+      // Inline renaming directly on the canvas card
+      const labelInput = fieldCard.querySelector('.canvas-field-label-input');
+      labelInput?.addEventListener('input', (e) => {
+        const val = e.target.value;
+        field.label = val;
+        // Sync right inspector in real time if visible
+        const inspLabel = document.getElementById('insp-label');
+        if (inspLabel && store.selectedFieldId === field.id && document.activeElement !== inspLabel) {
+          inspLabel.value = val;
+        }
+        store.updateFieldQuiet(field.id, { label: val }, false);
+      });
+
+      labelInput?.addEventListener('blur', (e) => {
+        store.updateFieldQuiet(field.id, { label: e.target.value }, true);
+      });
+
+      labelInput?.addEventListener('focus', () => {
+        if (store.selectedFieldId !== field.id) {
+          store.selectedFieldId = field.id;
+          this.canvasFieldsContainer.querySelectorAll('.canvas-field-item').forEach(c => {
+            c.classList.toggle('selected', c.getAttribute('data-id') === field.id);
+          });
+          this.renderInspector(form);
+        }
       });
 
       // Actions
@@ -402,6 +505,7 @@ export class FormBuilder {
     const selectedField = form.fields.find(f => f.id === store.selectedFieldId);
 
     if (!selectedField) {
+      this.currentInspectedFieldId = null;
       this.fieldInspectorPane.innerHTML = `
         <div style="text-align:center;padding:40px 10px;color:var(--text-muted);">
           <i class="ri-cursor-line" style="font-size:2rem;color:var(--primary);margin-bottom:8px;display:block;"></i>
@@ -412,6 +516,12 @@ export class FormBuilder {
       return;
     }
 
+    // Guard: If currently typing anywhere in builder studio, do NOT wipe the DOM and drop focus!
+    if (this.isUserTyping()) {
+      return;
+    }
+
+    this.currentInspectedFieldId = selectedField.id;
     const hasOptions = ['select', 'radio', 'checkbox'].includes(selectedField.type);
 
     this.fieldInspectorPane.innerHTML = `
@@ -424,18 +534,18 @@ export class FormBuilder {
 
       <div class="form-group">
         <label>Question Label</label>
-        <input type="text" id="insp-label" class="form-control" value="${selectedField.label || ''}" placeholder="Enter question..." />
+        <input type="text" id="insp-label" class="form-control" value="${(selectedField.label || '').replace(/"/g, '&quot;')}" placeholder="Enter question / column title..." />
       </div>
 
       <div class="form-group">
         <label>Help Text / Subtitle</label>
-        <input type="text" id="insp-help" class="form-control" value="${selectedField.helpText || ''}" placeholder="Instructions for respondent..." />
+        <input type="text" id="insp-help" class="form-control" value="${(selectedField.helpText || '').replace(/"/g, '&quot;')}" placeholder="Instructions for respondent..." />
       </div>
 
       ${!['rating', 'scale', 'signature', 'file', 'section'].includes(selectedField.type) ? `
         <div class="form-group">
           <label>Placeholder</label>
-          <input type="text" id="insp-placeholder" class="form-control" value="${selectedField.placeholder || ''}" placeholder="e.g. Type here..." />
+          <input type="text" id="insp-placeholder" class="form-control" value="${(selectedField.placeholder || '').replace(/"/g, '&quot;')}" placeholder="e.g. Type here..." />
         </div>
       ` : ''}
 
@@ -456,7 +566,7 @@ export class FormBuilder {
           <div class="options-editor-list" id="options-editor-list">
             ${(selectedField.options || []).map((opt, i) => `
               <div class="option-edit-row">
-                <input type="text" class="form-control insp-option-input" data-index="${i}" value="${opt}" />
+                <input type="text" class="form-control insp-option-input" data-index="${i}" value="${(opt || '').replace(/"/g, '&quot;')}" />
                 <button class="field-action-btn btn-delete insp-remove-opt" data-index="${i}"><i class="ri-close-line"></i></button>
               </div>
             `).join('')}
@@ -477,58 +587,139 @@ export class FormBuilder {
       if (['select', 'radio', 'checkbox'].includes(newType) && !selectedField.options) {
         updates.options = ['Option 1', 'Option 2', 'Option 3'];
       }
+      this.currentInspectedFieldId = null;
       store.updateField(selectedField.id, updates);
     });
 
     document.getElementById('insp-label')?.addEventListener('input', (e) => {
-      store.updateField(selectedField.id, { label: e.target.value });
+      const val = e.target.value;
+      selectedField.label = val;
+      // Sync canvas card input in real time
+      const canvasInput = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .canvas-field-label-input`);
+      if (canvasInput && document.activeElement !== canvasInput) {
+        canvasInput.value = val;
+      }
+      store.updateFieldQuiet(selectedField.id, { label: val }, false);
+    });
+
+    document.getElementById('insp-label')?.addEventListener('blur', (e) => {
+      store.updateFieldQuiet(selectedField.id, { label: e.target.value }, true);
     });
 
     document.getElementById('insp-help')?.addEventListener('input', (e) => {
-      store.updateField(selectedField.id, { helpText: e.target.value });
+      const val = e.target.value;
+      selectedField.helpText = val;
+      let helpEl = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .field-help-text`);
+      if (val) {
+        if (!helpEl) {
+          helpEl = document.createElement('div');
+          helpEl.className = 'field-help-text';
+          const labelContainer = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .field-label-container`);
+          labelContainer?.insertAdjacentElement('afterend', helpEl);
+        }
+        if (helpEl) helpEl.textContent = val;
+      } else if (helpEl) {
+        helpEl.remove();
+      }
+      store.updateFieldQuiet(selectedField.id, { helpText: val }, false);
+    });
+
+    document.getElementById('insp-help')?.addEventListener('blur', (e) => {
+      store.updateFieldQuiet(selectedField.id, { helpText: e.target.value }, true);
     });
 
     document.getElementById('insp-placeholder')?.addEventListener('input', (e) => {
-      store.updateField(selectedField.id, { placeholder: e.target.value });
+      const val = e.target.value;
+      selectedField.placeholder = val;
+      const mockInput = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .field-input-mock`);
+      if (mockInput) mockInput.placeholder = val || 'Your response...';
+      store.updateFieldQuiet(selectedField.id, { placeholder: val }, false);
+    });
+
+    document.getElementById('insp-placeholder')?.addEventListener('blur', (e) => {
+      store.updateFieldQuiet(selectedField.id, { placeholder: e.target.value }, true);
     });
 
     document.getElementById('insp-required')?.addEventListener('change', (e) => {
-      store.updateField(selectedField.id, { required: e.target.checked });
+      selectedField.required = e.target.checked;
+      const asterisk = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .required-asterisk`);
+      if (e.target.checked && !asterisk) {
+        const span = document.createElement('span');
+        span.className = 'required-asterisk';
+        span.textContent = '*';
+        this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .field-label-container`)?.appendChild(span);
+      } else if (!e.target.checked && asterisk) {
+        asterisk.remove();
+      }
+      store.updateFieldQuiet(selectedField.id, { required: e.target.checked }, true);
     });
 
     // Options management
+    const bindOptionInputs = () => {
+      document.querySelectorAll('.insp-option-input').forEach(input => {
+        input.oninput = (e) => {
+          const idx = parseInt(e.target.getAttribute('data-index'), 10);
+          if (!selectedField.options) selectedField.options = [];
+          selectedField.options[idx] = e.target.value;
+          const slot = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .field-preview-slot`);
+          if (slot) slot.innerHTML = this.getFieldPreviewHTML(selectedField);
+          store.updateFieldQuiet(selectedField.id, { options: selectedField.options }, false);
+        };
+        input.onblur = () => {
+          store.updateFieldQuiet(selectedField.id, { options: selectedField.options }, true);
+        };
+      });
+
+      document.querySelectorAll('.insp-remove-opt').forEach(btn => {
+        btn.onclick = (e) => {
+          const idx = parseInt(btn.getAttribute('data-index'), 10);
+          if (selectedField.options && selectedField.options.length > 1) {
+            selectedField.options.splice(idx, 1);
+            store.updateFieldQuiet(selectedField.id, { options: selectedField.options });
+            this.currentInspectedFieldId = null;
+            this.renderInspector(form);
+            const slot = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .field-preview-slot`);
+            if (slot) slot.innerHTML = this.getFieldPreviewHTML(selectedField);
+          }
+        };
+      });
+    };
+    bindOptionInputs();
+
     document.getElementById('btn-add-option')?.addEventListener('click', () => {
-      const opts = [...(selectedField.options || [])];
-      opts.push(`Option ${opts.length + 1}`);
-      store.updateField(selectedField.id, { options: opts });
-    });
+      if (!selectedField.options) selectedField.options = [];
+      const newOpt = `Option ${selectedField.options.length + 1}`;
+      selectedField.options.push(newOpt);
+      store.updateFieldQuiet(selectedField.id, { options: selectedField.options });
 
-    document.querySelectorAll('.insp-option-input').forEach(input => {
-      input.addEventListener('input', (e) => {
-        const idx = parseInt(e.target.getAttribute('data-index'), 10);
-        const opts = [...(selectedField.options || [])];
-        opts[idx] = e.target.value;
-        store.updateField(selectedField.id, { options: opts });
-      });
-    });
+      const editorList = document.getElementById('options-editor-list');
+      if (editorList) {
+        const idx = selectedField.options.length - 1;
+        const row = document.createElement('div');
+        row.className = 'option-edit-row';
+        row.innerHTML = `
+          <input type="text" class="form-control insp-option-input" data-index="${idx}" value="${newOpt}" />
+          <button class="field-action-btn btn-delete insp-remove-opt" data-index="${idx}"><i class="ri-close-line"></i></button>
+        `;
+        editorList.appendChild(row);
+        const inp = row.querySelector('.insp-option-input');
+        inp?.focus();
+        inp?.select();
+        bindOptionInputs();
+      }
 
-    document.querySelectorAll('.insp-remove-opt').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const idx = parseInt(btn.getAttribute('data-index'), 10);
-        const opts = [...(selectedField.options || [])];
-        if (opts.length > 1) {
-          opts.splice(idx, 1);
-          store.updateField(selectedField.id, { options: opts });
-        }
-      });
+      const slot = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${selectedField.id}"] .field-preview-slot`);
+      if (slot) slot.innerHTML = this.getFieldPreviewHTML(selectedField);
     });
 
     // Inspector action buttons
     document.getElementById('btn-insp-duplicate')?.addEventListener('click', () => {
+      this.currentInspectedFieldId = null;
       store.duplicateField(selectedField.id);
     });
 
     document.getElementById('btn-insp-delete')?.addEventListener('click', () => {
+      this.currentInspectedFieldId = null;
       store.deleteField(selectedField.id);
     });
   }
@@ -635,6 +826,12 @@ export class FormBuilder {
     });
 
     document.getElementById('insp-closed-msg')?.addEventListener('input', (e) => {
+      if (!form.settings) form.settings = { ...DEFAULT_FORM_SETTINGS };
+      form.settings.closedMessage = e.target.value;
+      store.saveForms(true, false);
+    });
+
+    document.getElementById('insp-closed-msg')?.addEventListener('blur', (e) => {
       store.updateFormSettings(form.id, { closedMessage: e.target.value });
     });
   }

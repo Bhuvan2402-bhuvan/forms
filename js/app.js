@@ -65,6 +65,13 @@ class App {
       const exists = store.forms.some(f => f.id === targetFormId);
       if (exists) {
         store.setActiveForm(targetFormId);
+      } else {
+        store.loadRemoteFormIfNeeded(targetFormId).then(loaded => {
+          if (loaded) {
+            store.setActiveForm(loaded.id);
+            if (this.runner) this.runner.render();
+          }
+        });
       }
       // Enable standalone respondent view (hides studio builder controls)
       document.body.classList.add('standalone-respondent-mode');

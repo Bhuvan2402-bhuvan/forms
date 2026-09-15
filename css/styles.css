@@ -698,12 +698,51 @@ a {
   align-items: center;
   gap: 6px;
   margin-bottom: 6px;
+  position: relative;
 }
 
 .field-label-text {
   font-weight: 700;
   font-size: 0.95rem;
   color: var(--text-main);
+}
+
+.canvas-field-label-input {
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  width: 100%;
+  transition: all var(--transition-normal);
+  outline: none;
+  cursor: text;
+}
+
+.canvas-field-label-input:hover {
+  background: var(--bg-subtle);
+  border-color: var(--border-color);
+}
+
+.canvas-field-label-input:focus {
+  background: var(--bg-surface);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.label-rename-hint {
+  font-size: 0.85rem;
+  color: var(--text-light);
+  opacity: 0;
+  transition: opacity var(--transition-normal);
+  pointer-events: none;
+}
+
+.canvas-field-item:hover .label-rename-hint {
+  opacity: 0.7;
 }
 
 .required-asterisk {
@@ -1372,32 +1411,220 @@ textarea.runner-input {
   border-top: 1px solid var(--border-light);
 }
 
-/* Success Celebration View */
+/* Dedicated Themed Thank You Screen */
 .submission-success-view {
   display: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 60px 40px;
-  gap: 16px;
+  padding: 46px 36px 36px;
+  gap: 22px;
+  width: 100%;
+  animation: fadeIn 0.4s ease;
 }
 
 .submission-success-view.show {
   display: flex;
 }
 
-.success-icon-badge {
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  background: rgba(16, 185, 129, 0.12);
-  color: var(--success);
-  font-size: 2.5rem;
+.thank-you-badge-wrapper {
+  position: relative;
+  width: 84px;
+  height: 84px;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.thank-you-glow {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  opacity: 0.3;
+  filter: blur(14px);
+  animation: pulseGlow 2.5s infinite ease-in-out;
+}
+
+.thank-you-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.6rem;
+  z-index: 2;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.2);
   animation: scaleIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.thank-you-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.thank-you-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.thank-you-title {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.thank-you-desc {
+  font-size: 0.98rem;
+  color: var(--text-muted);
+  max-width: 480px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.thank-you-receipt-card {
+  width: 100%;
+  max-width: 520px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+  box-shadow: var(--shadow-xs);
+}
+
+.receipt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 10px;
+}
+
+.receipt-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.1);
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+}
+
+.receipt-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.receipt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.88rem;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.receipt-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.receipt-value {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.receipt-ref-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-surface);
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-color);
+}
+
+.receipt-ref-code {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--primary);
+  letter-spacing: 0.05em;
+  font-size: 0.92rem;
+}
+
+.btn-copy-ref {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all var(--transition-normal);
+}
+
+.btn-copy-ref:hover {
+  background: var(--bg-subtle);
+  color: var(--primary);
+}
+
+.thank-you-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.thank-you-footer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
+  font-size: 0.78rem;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.25;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.45;
+  }
 }
 
 @keyframes scaleIn {
@@ -1405,16 +1632,9 @@ textarea.runner-input {
   100% { transform: scale(1); opacity: 1; }
 }
 
-.reference-code-box {
-  background: var(--bg-subtle);
-  border: 1px dashed var(--border-color);
-  padding: 10px 18px;
-  border-radius: var(--radius-md);
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: var(--primary);
-  letter-spacing: 0.05em;
+@keyframes fadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
 /* ==========================================================================

@@ -115,16 +115,53 @@ class FormStore {
   }
 
   async pushSubmissionToCloud(submission) {
-    if (!this.supabaseStatus.connected || !this.supabaseStatus.tablesReady) return;
     try {
-      await fetch('/api/submissions', {
+      const res = await fetch('/api/submissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(submission)
       });
+      return res.ok;
     } catch (e) {
       console.warn('Failed to push submission to Supabase:', e);
+      return false;
     }
+  }
+
+  async loadRemoteFormIfNeeded(formId) {
+    if (!formId) return null;
+    let form = this.forms.find(f => f.id === formId);
+    if (form) return form;
+    try {
+      const res = await fetch(`/api/forms`);
+      if (res.ok) {
+        const remoteForms = await res.json();
+        if (Array.isArray(remoteForms)) {
+          const found = remoteForms.find(rf => rf.id === formId);
+          if (found) {
+            form = {
+              id: found.id,
+              title: found.title,
+              description: found.description,
+              category: found.category,
+              badge: found.badge,
+              isMultiStep: found.is_multi_step,
+              theme: found.theme || {},
+              settings: found.settings || { ...DEFAULT_FORM_SETTINGS },
+              steps: found.steps || [],
+              fields: found.fields || []
+            };
+            this.forms.push(form);
+            this.saveForms(false);
+            this.setActiveForm(form.id);
+            return form;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load remote form:', e);
+    }
+    return null;
   }
 
   subscribe(listener) {
@@ -164,7 +201,16 @@ class FormStore {
     return initial;
   }
 
-  saveForms(syncCloud = true) {
+  debouncePushFormToCloud(form, delayMs = 1000) {
+    if (this.cloudSyncTimer) {
+      clearTimeout(this.cloudSyncTimer);
+    }
+    this.cloudSyncTimer = setTimeout(() => {
+      this.pushFormToCloud(form);
+    }, delayMs);
+  }
+
+  saveForms(syncCloud = true, immediate = false) {
     try {
       localStorage.setItem(STORAGE_KEYS.FORMS, JSON.stringify(this.forms));
       if (this.activeFormId) {
@@ -172,7 +218,14 @@ class FormStore {
       }
       if (syncCloud) {
         const active = this.getActiveForm();
-        if (active) this.pushFormToCloud(active);
+        if (active) {
+          if (immediate) {
+            if (this.cloudSyncTimer) clearTimeout(this.cloudSyncTimer);
+            this.pushFormToCloud(active);
+          } else {
+            this.debouncePushFormToCloud(active, 1000);
+          }
+        }
       }
     } catch (e) {
       console.error('Error saving forms to localStorage', e);
@@ -489,6 +542,16 @@ class FormStore {
     if (field) {
       Object.assign(field, updates);
       this.notify('fieldUpdated', field);
+    }
+  }
+
+  updateFieldQuiet(fieldId, updates, immediate = false) {
+    const form = this.getActiveForm();
+    if (!form) return;
+    const field = form.fields.find(f => f.id === fieldId);
+    if (field) {
+      Object.assign(field, updates);
+      this.saveForms(true, immediate);
     }
   }
 
