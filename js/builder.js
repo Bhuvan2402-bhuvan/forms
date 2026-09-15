@@ -27,13 +27,16 @@ export class FormBuilder {
     this.render();
 
     // Listen to store changes with typing guard
-    store.subscribe((event) => {
+    store.subscribe((event, payload) => {
       if (['activeFormChanged', 'formCreated', 'formImported', 'formUpdated', 'fieldAdded', 'fieldUpdated', 'fieldDuplicated', 'fieldDeleted', 'fieldsReordered', 'stepAdded', 'stepDeleted', 'themeUpdated'].includes(event)) {
         if (this.isUserTyping()) {
           this.pendingRender = true;
           return;
         }
         this.render();
+        if (event === 'fieldAdded' || event === 'fieldDuplicated') {
+          this.scrollToField(payload?.id || store.selectedFieldId);
+        }
       }
     });
 
@@ -46,6 +49,16 @@ export class FormBuilder {
         }
       }, 120);
     });
+  }
+
+  scrollToField(fieldId) {
+    if (!fieldId) return;
+    setTimeout(() => {
+      const el = this.canvasFieldsContainer?.querySelector(`.canvas-field-item[data-id="${fieldId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 60);
   }
 
   isUserTyping() {

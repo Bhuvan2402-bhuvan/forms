@@ -353,8 +353,11 @@ a {
 .view-panel {
   display: none;
   flex: 1;
+  min-height: 0;
+  min-width: 0;
   overflow: hidden;
   height: calc(100vh - var(--header-height));
+  max-height: calc(100vh - var(--header-height));
   position: relative;
 }
 
@@ -369,7 +372,11 @@ a {
   display: flex;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  min-width: 0;
+  max-height: 100%;
   overflow: hidden;
+  position: relative;
 }
 
 /* Left Palette Sidebar */
@@ -381,6 +388,8 @@ a {
   flex-direction: column;
   flex-shrink: 0;
   overflow-y: auto;
+  height: 100%;
+  min-height: 0;
   z-index: 10;
 }
 
@@ -495,14 +504,21 @@ a {
 /* Center Canvas */
 .canvas-viewport {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  max-height: 100%;
   overflow-y: auto;
-  padding: 30px 20px 80px;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 30px 20px 140px;
   display: flex;
   flex-direction: column;
   align-items: center;
   background: var(--bg-main);
   background-image: radial-gradient(rgba(148, 163, 184, 0.25) 1px, transparent 1px);
   background-size: 24px 24px;
+  scroll-behavior: smooth;
 }
 
 .form-canvas-card {
@@ -882,6 +898,9 @@ a {
   flex-direction: column;
   flex-shrink: 0;
   overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
   z-index: 10;
 }
 
