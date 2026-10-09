@@ -10,6 +10,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3005
+      - REQUIRE_POSTGRES=${REQUIRE_POSTGRES:-true}
       - APP_URL=${APP_URL:-http://localhost:3005}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-formcraft}:${POSTGRES_PASSWORD:-formcraft_secret_2026}@postgres:5432/${POSTGRES_DB:-formcraft_db}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}

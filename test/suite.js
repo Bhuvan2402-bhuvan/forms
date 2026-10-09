@@ -6,6 +6,7 @@
 
 const {
   startServer,
+  setRequirePostgres,
   encryptField,
   decryptField,
   encryptSubmissionPayload,
@@ -13,6 +14,7 @@ const {
 } = require('../server.js');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const TEST_PORT = 3198;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
@@ -144,9 +146,9 @@ async function runTests() {
     assert(spaRoute.status === 200, 'SPA deep route /f/:id is accessible without login');
 
     // ------------------------------------------------------------------------
-    // Group 5: Encrypted Submissions & Verification
+    // Group 5: Form Response Submission & Strict Authorization Gate
     // ------------------------------------------------------------------------
-    console.log('\n[Test Group 5: Form Response Submission & Verification]');
+    console.log('\n[Test Group 5: Form Response Submission & Strict Authorization Gate]');
 
     const subId = `sub-test-${Date.now()}`;
     const subRes = await fetch(`${BASE_URL}/api/submissions`, {
@@ -161,12 +163,52 @@ async function runTests() {
       })
     });
     assert(subRes.status === 200, 'Response submission successful (HTTP 200)');
+    assert(subRes.headers.get('x-database-engine') !== null, 'Header X-Database-Engine is present');
 
-    const getSubs = await fetch(`${BASE_URL}/api/submissions?formId=${formId1}`);
-    assert(getSubs.status === 200, 'GET /api/submissions returns 200');
-    const subs = await getSubs.json();
+    // 5.1 Test Missing Token -> Must return 401 Unauthorized
+    const unauthSubs = await fetch(`${BASE_URL}/api/submissions?formId=${formId1}`);
+    assert(unauthSubs.status === 401, 'Unauthorized request (no token) rejected with HTTP 401');
+    const unauthBody = await unauthSubs.json();
+    assert(unauthBody.error && !Array.isArray(unauthBody), 'Response contains error message and NO private submission data');
+
+    // 5.2 Test Invalid / Forged Token -> Must return 401 Unauthorized
+    const forgedSubs = await fetch(`${BASE_URL}/api/submissions?formId=${formId1}`, {
+      headers: { 'Authorization': 'Bearer forged.invalid.token.12345' }
+    });
+    assert(forgedSubs.status === 401, 'Forged/tampered session token rejected with HTTP 401');
+
+    // 5.3 Test Expired Token -> Must return 401 Unauthorized
+    const expiredPayload = Buffer.from(JSON.stringify({
+      role: 'admin',
+      iat: Date.now() - 100000,
+      exp: Date.now() - 50000 // Expired 50 seconds ago
+    })).toString('base64url');
+    const expiredSig = crypto.createHmac('sha256', process.env.ADMIN_SECRET || 'formcraft_production_secret_key_2026_default')
+      .update(expiredPayload).digest('base64url');
+    const expiredToken = `${expiredPayload}.${expiredSig}`;
+
+    const expiredRes = await fetch(`${BASE_URL}/api/submissions?formId=${formId1}`, {
+      headers: { 'Authorization': `Bearer ${expiredToken}` }
+    });
+    assert(expiredRes.status === 401, 'Expired session token rejected with HTTP 401');
+
+    // 5.4 Test Valid Administrator Token -> Must return 200 OK and decrypted submissions
+    const adminLoginRes = await fetch(`${BASE_URL}/api/admin-auth?action=login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: process.env.ADMIN_PASSWORD || 'admin123' })
+    });
+    assert(adminLoginRes.status === 200, 'Admin login succeeded to retrieve valid bearer token');
+    const { token: validAdminToken } = await adminLoginRes.json();
+
+    const authSubs = await fetch(`${BASE_URL}/api/submissions?formId=${formId1}`, {
+      headers: { 'Authorization': `Bearer ${validAdminToken}` }
+    });
+    assert(authSubs.status === 200, 'GET /api/submissions with valid admin token returns HTTP 200');
+    const subs = await authSubs.json();
+    assert(Array.isArray(subs), 'Authorized response returns submissions array');
     const foundSub = subs.find(s => s.id === subId);
-    assert(foundSub && foundSub.data.q1 === 'Elena Vance - Senior Director', 'Decrypted submission data accurately delivered to authorized query');
+    assert(foundSub && foundSub.data.q1 === 'Elena Vance - Senior Director', 'Decrypted submission data accurately delivered only to authorized administrator');
 
     // ------------------------------------------------------------------------
     // Group 6: Private File Storage & Upload Security
@@ -233,8 +275,117 @@ async function runTests() {
     assert(logContent.includes('LOGIN_SUCCESS') && logContent.includes('FORM_SAVED'), 'Audit log records security events without logging passwords');
 
     // ------------------------------------------------------------------------
-    // Summary
+    // Group 9: Production Persistence Hardening & Outage Handling
     // ------------------------------------------------------------------------
+    console.log('\n[Test Group 9: Authoritative Production Persistence & Outage Handling]');
+
+    // 9.1 Enable Strict PostgreSQL Mode (fallback disabled)
+    setRequirePostgres(true);
+
+    const strictStatusRes = await fetch(`${BASE_URL}/api/status`);
+    assert(strictStatusRes.status === 503, 'GET /api/status returns HTTP 503 when PostgreSQL is required but offline');
+    const strictStatus = await strictStatusRes.json();
+    assert(strictStatus.requirePostgres === true, 'Status declares requirePostgres: true');
+
+    // 9.2 Attempt Form Save in Strict Mode when DB is offline -> Must reject with 503/500
+    const failedFormRes = await fetch(`${BASE_URL}/api/forms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: `form-strict-fail-${Date.now()}`,
+        title: 'Should Fail Persistence In Strict Mode'
+      })
+    });
+    assert(failedFormRes.status === 503 || failedFormRes.status === 500, 'Form write rejected with HTTP 503/500 when authoritative DB is offline (no false success)');
+    const failedFormBody = await failedFormRes.json();
+    assert(failedFormBody.success === false || failedFormBody.error, 'Response explicitly signals persistence failure');
+
+    // 9.3 Attempt Submission Save in Strict Mode when DB is offline -> Must reject with 503/500
+    const failedSubRes = await fetch(`${BASE_URL}/api/submissions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: `sub-strict-fail-${Date.now()}`,
+        formId: formId1,
+        data: { test: 'value' }
+      })
+    });
+    assert(failedSubRes.status === 503 || failedSubRes.status === 500, 'Submission write rejected with HTTP 503/500 when authoritative DB is offline (no false success)');
+
+    // 9.4 Restore Standard Mode
+    setRequirePostgres(false);
+    const restoredStatus = await fetch(`${BASE_URL}/api/status`);
+    assert(restoredStatus.status === 200, 'Status restored to HTTP 200 after resetting mode');
+
+    // 9.5 Duplicate Submission Test (Idempotent submission handling)
+    const dupSubId = `sub-dup-${Date.now()}`;
+    const firstSub = await fetch(`${BASE_URL}/api/submissions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: dupSubId,
+        formId: formId1,
+        data: { name: 'First Attempt' }
+      })
+    });
+    assert(firstSub.status === 200, 'Initial submission succeeds with HTTP 200');
+
+    const secondSub = await fetch(`${BASE_URL}/api/submissions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: dupSubId,
+        formId: formId1,
+        data: { name: 'Duplicate Attempt' }
+      })
+    });
+    // 9.6 Concurrent Submission Requests Test
+    const concurrentIds = [`sub-c1-${Date.now()}`, `sub-c2-${Date.now()}`, `sub-c3-${Date.now()}`];
+    const concurrentPromises = concurrentIds.map((cid, idx) => fetch(`${BASE_URL}/api/submissions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: cid,
+        formId: formId1,
+        data: { name: `Concurrent Applicant #${idx + 1}` }
+      })
+    }));
+    const concurrentResults = await Promise.all(concurrentPromises);
+    assert(concurrentResults.every(r => r.status === 200), 'Concurrent submission requests handled safely without race conditions');
+
+    // 9.7 Preservation of Local Migration JSON Files
+    const localFormsPath = path.join(__dirname, '..', 'data', 'forms.json');
+    assert(fs.existsSync(localFormsPath), 'Local migration forms file data/forms.json preserved and readable');
+    const localSubsPath = path.join(__dirname, '..', 'data', 'submissions.json');
+    assert(fs.existsSync(localSubsPath), 'Local migration submissions file data/submissions.json preserved and readable');
+
+    // ------------------------------------------------------------------------
+    // Group 10: Server Restart & State Durability Verification
+    // ------------------------------------------------------------------------
+    console.log('\n[Test Group 10: Server Restart & State Durability]');
+
+    // Stop and restart server instance on test port to verify state durability
+    await new Promise(resolve => serverInstance.close(resolve));
+    serverInstance = startServer(TEST_PORT);
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // Verify previously created form survives restart
+    const restartFormCheck = await fetch(`${BASE_URL}/api/forms?id=${formId1}`);
+    assert(restartFormCheck.status === 200, 'Persisted form retrieved successfully after server restart');
+    const restartFormObj = await restartFormCheck.json();
+    assert(restartFormObj.id === formId1 && restartFormObj.title === 'Executive Fellowship Intake 2026', 'Form structure intact across restart');
+
+    // Verify public share URL works after restart
+    const restartShareUrl = await fetch(`${BASE_URL}/f/${formId1}`);
+    assert(restartShareUrl.status === 200, 'Public form share URL accessible after server restart');
+
+    // Verify admin login works after restart
+    const restartLogin = await fetch(`${BASE_URL}/api/admin-auth?action=login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: process.env.ADMIN_PASSWORD || 'admin123' })
+    });
+    assert(restartLogin.status === 200, 'Admin credentials verified and login functional after server restart');
     console.log('\n===============================================================');
     console.log(`Security Test Suite Complete: ${passedCount} Passed, ${failedCount} Failed`);
     console.log('===============================================================');

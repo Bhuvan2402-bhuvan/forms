@@ -98,25 +98,30 @@ class FormStore {
         }
       }
 
-      // Pull or seed submissions
-      const subRes = await fetch('/api/submissions');
-      if (subRes.ok) {
-        const remoteSubs = await subRes.json();
-        if (Array.isArray(remoteSubs) && remoteSubs.length > 0) {
-          const subMap = new Map();
-          this.submissions.forEach(s => subMap.set(s.id, s));
-          remoteSubs.forEach(rs => {
-            subMap.set(rs.id, {
-              id: rs.id,
-              formId: rs.form_id || rs.formId,
-              submittedAt: rs.submitted_at || rs.submittedAt,
-              durationSeconds: rs.duration_seconds || rs.durationSeconds || 60,
-              data: rs.data || {}
+      // Pull remote submissions if authenticated admin token is present
+      const adminToken = localStorage.getItem('formcraft_admin_token');
+      if (adminToken) {
+        const subRes = await fetch('/api/submissions', {
+          headers: { 'Authorization': `Bearer ${adminToken}` }
+        });
+        if (subRes.ok) {
+          const remoteSubs = await subRes.json();
+          if (Array.isArray(remoteSubs) && remoteSubs.length > 0) {
+            const subMap = new Map();
+            this.submissions.forEach(s => subMap.set(s.id, s));
+            remoteSubs.forEach(rs => {
+              subMap.set(rs.id, {
+                id: rs.id,
+                formId: rs.form_id || rs.formId,
+                submittedAt: rs.submitted_at || rs.submittedAt,
+                durationSeconds: rs.duration_seconds || rs.durationSeconds || 60,
+                data: rs.data || {}
+              });
             });
-          });
-          this.submissions = Array.from(subMap.values());
-          localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(this.submissions));
-          this.notify('submissionAdded', null);
+            this.submissions = Array.from(subMap.values());
+            localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(this.submissions));
+            this.notify('submissionAdded', null);
+          }
         }
       }
     } catch (e) {

@@ -39,6 +39,12 @@ const ENCRYPTION_KEY_RAW = process.env.ENCRYPTION_KEY || '';
 const DEFAULT_PORT = parseInt(process.env.PORT || '3005', 10);
 const MAX_BODY_SIZE = 5 * 1024 * 1024; // 5 MB
 
+let REQUIRE_POSTGRES = process.env.REQUIRE_POSTGRES === 'true' || (process.env.NODE_ENV === 'production' && process.env.ALLOW_JSON_FALLBACK !== 'true' && !!(DATABASE_URL || PGHOST));
+
+function setRequirePostgres(val) {
+  REQUIRE_POSTGRES = !!val;
+}
+
 const PUBLIC_DIR = __dirname;
 const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
@@ -384,6 +390,9 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
 
+  // Database engine indicator header
+  res.setHeader('X-Database-Engine', pgAvailable ? 'postgresql' : 'local_json');
+
   // CORS Policy
   const reqOrigin = req.headers.origin;
   if (reqOrigin && (reqOrigin === origin || reqOrigin.startsWith('http://localhost') || reqOrigin.startsWith('http://127.0.0.1'))) {
@@ -410,7 +419,8 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       canonicalOrigin: origin,
       environment: process.env.NODE_ENV || 'production',
-      database: pgAvailable ? 'postgresql' : 'local_json',
+      database: pgAvailable ? 'postgresql' : (REQUIRE_POSTGRES ? 'postgresql_offline' : 'local_json'),
+      requirePostgres: REQUIRE_POSTGRES,
       encryption: 'AES-256-GCM',
       version: '1.0.0'
     }));
@@ -420,11 +430,13 @@ const server = http.createServer(async (req, res) => {
   // 1. Health & Status
   if (pathname === '/api/status') {
     res.setHeader('Content-Type', 'application/json');
-    res.writeHead(200);
+    const isHealthy = REQUIRE_POSTGRES ? pgAvailable : (pgAvailable || true);
+    res.writeHead(isHealthy ? 200 : 503);
     res.end(JSON.stringify({
       connected: pgAvailable,
-      databaseType: pgAvailable ? 'PostgreSQL (Self-Hosted)' : 'Local JSON Store',
-      tablesReady: true,
+      databaseType: pgAvailable ? 'PostgreSQL (Self-Hosted Authoritative)' : (REQUIRE_POSTGRES ? 'PostgreSQL (Offline - Fallback Disabled)' : 'Local JSON Store'),
+      tablesReady: pgAvailable,
+      requirePostgres: REQUIRE_POSTGRES,
       canonicalOrigin: origin
     }));
     return;
@@ -608,10 +620,21 @@ const server = http.createServer(async (req, res) => {
                 updatedAt: row.updated_at
               };
             }
-          } catch {}
+          } catch (err) {
+            logAuditEvent('DATABASE_READ_ERROR', { operation: 'get_form', formId: id, error: err.message }, clientIp);
+            if (REQUIRE_POSTGRES) {
+              res.writeHead(503);
+              res.end(JSON.stringify({ error: 'Authoritative database query failed.' }));
+              return;
+            }
+          }
+        } else if (REQUIRE_POSTGRES) {
+          res.writeHead(503);
+          res.end(JSON.stringify({ error: 'Authoritative database is offline. Fallback disabled.' }));
+          return;
         }
 
-        if (!form) {
+        if (!form && !REQUIRE_POSTGRES) {
           const localForms = getLocalForms();
           form = localForms.find(f => f.id === id) || null;
         }
@@ -647,13 +670,26 @@ const server = http.createServer(async (req, res) => {
               updatedAt: row.updated_at
             });
           });
-        } catch {}
+        } catch (err) {
+          logAuditEvent('DATABASE_READ_ERROR', { operation: 'get_forms_all', error: err.message }, clientIp);
+          if (REQUIRE_POSTGRES) {
+            res.writeHead(503);
+            res.end(JSON.stringify({ error: 'Authoritative database query failed.' }));
+            return;
+          }
+        }
+      } else if (REQUIRE_POSTGRES) {
+        res.writeHead(503);
+        res.end(JSON.stringify({ error: 'Authoritative database is offline. Fallback disabled.' }));
+        return;
       }
 
-      const localForms = getLocalForms();
-      localForms.forEach(f => {
-        if (!formsMap.has(f.id)) formsMap.set(f.id, f);
-      });
+      if (!REQUIRE_POSTGRES) {
+        const localForms = getLocalForms();
+        localForms.forEach(f => {
+          if (!formsMap.has(f.id)) formsMap.set(f.id, f);
+        });
+      }
 
       const combined = Array.from(formsMap.values());
       if (combined.length > 0) saveLocalForms(combined);
@@ -714,7 +750,44 @@ const server = http.createServer(async (req, res) => {
         updated_at: new Date().toISOString()
       };
 
-      // 1. PostgreSQL Save
+      // 1. Strict PostgreSQL Save
+      if (REQUIRE_POSTGRES) {
+        if (!pgPool || !pgAvailable) {
+          logAuditEvent('DATABASE_PERSISTENCE_ERROR', { operation: 'save_form', formId, error: 'PostgreSQL offline' }, clientIp);
+          res.writeHead(503);
+          res.end(JSON.stringify({ success: false, error: 'Database persistence failed: Authoritative database is offline.' }));
+          return;
+        }
+        try {
+          await pgPool.query(`
+            INSERT INTO forms (id, title, description, category, badge, is_multi_step, theme, settings, steps, fields, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+              title = EXCLUDED.title,
+              description = EXCLUDED.description,
+              category = EXCLUDED.category,
+              badge = EXCLUDED.badge,
+              is_multi_step = EXCLUDED.is_multi_step,
+              theme = EXCLUDED.theme,
+              settings = EXCLUDED.settings,
+              steps = EXCLUDED.steps,
+              fields = EXCLUDED.fields,
+              updated_at = CURRENT_TIMESTAMP
+          `, [formId, title, description, category, badge, isMultiStep, JSON.stringify(theme), JSON.stringify(settings), JSON.stringify(steps), JSON.stringify(fields)]);
+          
+          logAuditEvent('FORM_SAVED', { formId, title, storage: 'postgresql' }, clientIp);
+          res.writeHead(200);
+          res.end(JSON.stringify(formRow));
+          return;
+        } catch (err) {
+          logAuditEvent('DATABASE_PERSISTENCE_ERROR', { operation: 'save_form', formId, error: err.message }, clientIp);
+          res.writeHead(500);
+          res.end(JSON.stringify({ success: false, error: 'Database persistence failed. Form could not be saved to PostgreSQL.' }));
+          return;
+        }
+      }
+
+      // 2. Dual/Fallback Mode
       if (pgPool) {
         try {
           await pgPool.query(`
@@ -735,10 +808,13 @@ const server = http.createServer(async (req, res) => {
           pgAvailable = true;
         } catch (err) {
           console.warn('PostgreSQL save failed:', err.message);
+          pgAvailable = false;
+          logAuditEvent('DATABASE_PERSISTENCE_WARNING', { operation: 'save_form', formId, error: err.message }, clientIp);
+          res.setHeader('X-Database-Fallback', 'true');
         }
       }
 
-      // 2. Local File Save
+      // Local File Save (Fallback Mode only)
       const localForms = getLocalForms();
       const existingIdx = localForms.findIndex(f => f.id === formId);
       if (existingIdx >= 0) {
@@ -748,7 +824,7 @@ const server = http.createServer(async (req, res) => {
       }
       saveLocalForms(localForms);
 
-      logAuditEvent('FORM_SAVED', { formId, title }, clientIp);
+      logAuditEvent('FORM_SAVED', { formId, title, storage: 'local_json' }, clientIp);
       res.writeHead(200);
       res.end(JSON.stringify(formRow));
       return;
@@ -794,6 +870,13 @@ const server = http.createServer(async (req, res) => {
       const authHeader = req.headers.authorization || '';
       const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
 
+      if (!verifySessionToken(token)) {
+        logAuditEvent('UNAUTHORIZED_SUBMISSIONS_ACCESS', { formId: parsedUrl.searchParams.get('formId') }, clientIp);
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Unauthorized. Administrator authentication required to access form submissions.' }));
+        return;
+      }
+
       const formId = parsedUrl.searchParams.get('formId');
       let subs = [];
 
@@ -812,11 +895,22 @@ const server = http.createServer(async (req, res) => {
             durationSeconds: row.duration_seconds,
             data: decryptSubmissionPayload(row.data || {})
           }));
-        } catch {}
+        } catch (err) {
+          logAuditEvent('DATABASE_READ_ERROR', { operation: 'get_submissions', formId, error: err.message }, clientIp);
+          if (REQUIRE_POSTGRES) {
+            res.writeHead(503);
+            res.end(JSON.stringify({ error: 'Authoritative database query failed.' }));
+            return;
+          }
+        }
+      } else if (REQUIRE_POSTGRES) {
+        res.writeHead(503);
+        res.end(JSON.stringify({ error: 'Authoritative database is offline. Fallback disabled.' }));
+        return;
       }
 
-      // 2. Local Fallback
-      if (subs.length === 0) {
+      // 2. Local Fallback (only when strict PostgreSQL mode is disabled)
+      if (subs.length === 0 && !REQUIRE_POSTGRES) {
         const localSubs = getLocalSubmissions();
         const filtered = formId ? localSubs.filter(s => (s.form_id === formId || s.formId === formId)) : localSubs;
         subs = filtered.map(s => ({
@@ -901,7 +995,38 @@ const server = http.createServer(async (req, res) => {
         data: encryptedData
       };
 
-      // 1. PostgreSQL Save
+      // 1. Strict PostgreSQL Save
+      if (REQUIRE_POSTGRES) {
+        if (!pgPool || !pgAvailable) {
+          logAuditEvent('DATABASE_PERSISTENCE_ERROR', { operation: 'save_submission', subId, formId, error: 'PostgreSQL offline' }, clientIp);
+          res.writeHead(503);
+          res.end(JSON.stringify({ success: false, error: 'Database persistence failed: Authoritative database is offline.' }));
+          return;
+        }
+        try {
+          const insertRes = await pgPool.query(`
+            INSERT INTO submissions (id, form_id, submitted_at, duration_seconds, data)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (id) DO NOTHING
+          `, [subId, formId, submittedAt, durationSeconds, JSON.stringify(encryptedData)]);
+
+          if (insertRes.rowCount === 0) {
+            logAuditEvent('DUPLICATE_SUBMISSION_IGNORED', { subId, formId }, clientIp);
+          }
+
+          logAuditEvent('RESPONSE_SUBMITTED', { formId, subId, storage: 'postgresql' }, clientIp);
+          res.writeHead(200);
+          res.end(JSON.stringify({ success: true, id: subId, submittedAt }));
+          return;
+        } catch (err) {
+          logAuditEvent('DATABASE_PERSISTENCE_ERROR', { operation: 'save_submission', subId, formId, error: err.message }, clientIp);
+          res.writeHead(500);
+          res.end(JSON.stringify({ success: false, error: 'Database persistence failed. Response could not be saved to PostgreSQL.' }));
+          return;
+        }
+      }
+
+      // 2. Dual/Fallback Mode
       if (pgPool) {
         try {
           await pgPool.query(`
@@ -912,15 +1037,18 @@ const server = http.createServer(async (req, res) => {
           pgAvailable = true;
         } catch (err) {
           console.warn('PostgreSQL submission insert warning:', err.message);
+          pgAvailable = false;
+          logAuditEvent('DATABASE_PERSISTENCE_WARNING', { operation: 'save_submission', subId, formId, error: err.message }, clientIp);
+          res.setHeader('X-Database-Fallback', 'true');
         }
       }
 
-      // 2. Local File Save
+      // Local File Save (Fallback Mode only)
       const localSubs = getLocalSubmissions();
       localSubs.unshift(subRow);
       saveLocalSubmissions(localSubs);
 
-      logAuditEvent('RESPONSE_SUBMITTED', { formId, subId }, clientIp);
+      logAuditEvent('RESPONSE_SUBMITTED', { formId, subId, storage: 'local_json' }, clientIp);
       res.writeHead(200);
       res.end(JSON.stringify({ success: true, id: subId, submittedAt }));
       return;
@@ -1130,6 +1258,7 @@ module.exports = {
   server,
   startServer,
   initPgDatabase,
+  setRequirePostgres,
   encryptField,
   decryptField,
   encryptSubmissionPayload,
