@@ -404,7 +404,7 @@ export class AdminManager {
       const formSubs = store.submissions.filter(s => s.formId === form.id);
       const openStatus = store.isFormOpen(form);
       const settings = form.settings || {};
-      const uniqueUrl = `${origin}/f/${form.id}`;
+      const uniqueUrl = store.getFormUrl(form.id);
 
       // Format End Time Deadline
       let deadlineHTML = `<span style="color:var(--text-light);font-size:0.8rem;">No deadline</span>`;

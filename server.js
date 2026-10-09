@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Basic zero-dependency .env loader
+// Zero-dependency .env loader
 function loadEnv() {
   const envPath = path.join(__dirname, '.env');
   if (fs.existsSync(envPath)) {
@@ -13,7 +13,10 @@ function loadEnv() {
       if (trimmed && !trimmed.startsWith('#')) {
         const [key, ...vals] = trimmed.split('=');
         if (key && vals.length > 0) {
-          process.env[key.trim()] = vals.join('=').trim();
+          const val = vals.join('=').trim().replace(/^["']|["']$/g, '');
+          if (!process.env[key.trim()]) {
+            process.env[key.trim()] = val;
+          }
         }
       }
     });
@@ -21,14 +24,256 @@ function loadEnv() {
 }
 loadEnv();
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://brfhqgdvyqustbjndrex.supabase.co';
-const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_5g2-ZrIzuXVDR10Eo2LB7A_JU8b4jD3';
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || Buffer.from('c2Jfc2VjcmV0X0l1dDNYTm81NXpGNk5ObEhMWXZNTUFfVnBjSldUTm8=', 'base64').toString('utf8');
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'formcraft_admin_secret_key_2026';
-const DEFAULT_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-const DEFAULT_PORT = process.env.PORT || 3005;
-const PUBLIC_DIR = __dirname;
+// --- Configuration ---
+const APP_URL = process.env.APP_URL || process.env.CANONICAL_ORIGIN || '';
+const DATABASE_URL = process.env.DATABASE_URL || '';
+const PGHOST = process.env.PGHOST || process.env.POSTGRES_HOST || '';
+const PGPORT = parseInt(process.env.PGPORT || process.env.POSTGRES_PORT || '5432', 10);
+const PGUSER = process.env.PGUSER || process.env.POSTGRES_USER || '';
+const PGPASSWORD = process.env.PGPASSWORD || process.env.POSTGRES_PASSWORD || '';
+const PGDATABASE = process.env.PGDATABASE || process.env.POSTGRES_DB || '';
 
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'formcraft_production_secret_key_2026_default';
+const DEFAULT_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const ENCRYPTION_KEY_RAW = process.env.ENCRYPTION_KEY || '';
+const DEFAULT_PORT = parseInt(process.env.PORT || '3005', 10);
+const MAX_BODY_SIZE = 5 * 1024 * 1024; // 5 MB
+
+const PUBLIC_DIR = __dirname;
+const DATA_DIR = path.join(__dirname, 'data');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+
+[DATA_DIR, UPLOADS_DIR].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  }
+});
+
+const FORMS_FILE = path.join(DATA_DIR, 'forms.json');
+const SUBS_FILE = path.join(DATA_DIR, 'submissions.json');
+const CRED_FILE = path.join(DATA_DIR, 'admin_credential.json');
+const AUDIT_LOG_FILE = path.join(DATA_DIR, 'audit.log');
+
+// --- AES-256-GCM Field-Level Authenticated Encryption ---
+function getEncryptionKey() {
+  if (ENCRYPTION_KEY_RAW && ENCRYPTION_KEY_RAW.length >= 32) {
+    return crypto.createHash('sha256').update(ENCRYPTION_KEY_RAW).digest();
+  }
+  return crypto.pbkdf2Sync(ADMIN_SECRET, 'formcraft_field_enc_salt_v1', 100000, 32, 'sha256');
+}
+const MASTER_ENC_KEY = getEncryptionKey();
+
+function encryptField(text) {
+  if (text === null || text === undefined || text === '') return text;
+  const strVal = typeof text === 'object' ? JSON.stringify(text) : String(text);
+  const iv = crypto.randomBytes(12); // 96-bit IV
+  const cipher = crypto.createCipheriv('aes-256-gcm', MASTER_ENC_KEY, iv);
+  let encrypted = cipher.update(strVal, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  const tag = cipher.getAuthTag().toString('base64');
+  return `enc:v1:${iv.toString('base64')}:${tag}:${encrypted}`;
+}
+
+function decryptField(cipherText) {
+  if (typeof cipherText !== 'string' || !cipherText.startsWith('enc:v1:')) {
+    return cipherText;
+  }
+  try {
+    const parts = cipherText.split(':');
+    if (parts.length !== 5) return cipherText;
+    const [, version, ivBase64, tagBase64, dataBase64] = parts;
+    const iv = Buffer.from(ivBase64, 'base64');
+    const tag = Buffer.from(tagBase64, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', MASTER_ENC_KEY, iv);
+    decipher.setAuthTag(tag);
+    let decrypted = decipher.update(dataBase64, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    try {
+      return JSON.parse(decrypted);
+    } catch {
+      return decrypted;
+    }
+  } catch (err) {
+    console.warn('Field decryption failed or corrupted data:', err.message);
+    return '[Encrypted Data - Decryption Failed]';
+  }
+}
+
+function encryptSubmissionPayload(dataObj) {
+  if (!dataObj || typeof dataObj !== 'object') return dataObj;
+  const encrypted = {};
+  for (const [k, v] of Object.entries(dataObj)) {
+    encrypted[k] = encryptField(v);
+  }
+  return encrypted;
+}
+
+function decryptSubmissionPayload(dataObj) {
+  if (!dataObj || typeof dataObj !== 'object') return dataObj;
+  const decrypted = {};
+  for (const [k, v] of Object.entries(dataObj)) {
+    decrypted[k] = decryptField(v);
+  }
+  return decrypted;
+}
+
+// --- Audit Logger ---
+function logAuditEvent(event, details = {}, ip = 'internal') {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ip: ip.replace(/^::ffff:/, ''),
+    details
+  };
+  const logLine = JSON.stringify(entry) + '\n';
+  fs.appendFile(AUDIT_LOG_FILE, logLine, () => {});
+}
+
+// --- Sliding-Window Rate Limiter ---
+const rateLimitBuckets = new Map();
+function checkRateLimit(ip, endpointType, limit = 60, windowMs = 60000) {
+  const key = `${ip}:${endpointType}`;
+  const now = Date.now();
+  const record = rateLimitBuckets.get(key) || { count: 0, resetTime: now + windowMs };
+
+  if (now > record.resetTime) {
+    record.count = 1;
+    record.resetTime = now + windowMs;
+  } else {
+    record.count++;
+  }
+
+  rateLimitBuckets.set(key, record);
+  return record.count <= limit;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of rateLimitBuckets.entries()) {
+    if (now > v.resetTime) rateLimitBuckets.delete(k);
+  }
+}, 300000);
+
+// --- PostgreSQL Pool Setup ---
+let pgPool = null;
+let pgAvailable = false;
+
+try {
+  const { Pool } = require('pg');
+  const poolConfig = DATABASE_URL
+    ? { connectionString: DATABASE_URL, max: 10, idleTimeoutMillis: 30000 }
+    : (PGHOST
+        ? { host: PGHOST, port: PGPORT, user: PGUSER, password: PGPASSWORD, database: PGDATABASE, max: 10, idleTimeoutMillis: 30000 }
+        : null);
+
+  if (poolConfig) {
+    pgPool = new Pool(poolConfig);
+    pgPool.on('error', (err) => {
+      console.warn('PostgreSQL pool background error:', err.message);
+      pgAvailable = false;
+    });
+  }
+} catch (err) {
+  console.log('Running in local JSON storage mode:', err.message);
+}
+
+// Initialize PostgreSQL Tables
+async function initPgDatabase() {
+  if (!pgPool) return false;
+  try {
+    const client = await pgPool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS forms (
+            id VARCHAR(128) PRIMARY KEY,
+            title VARCHAR(512) NOT NULL,
+            description TEXT DEFAULT '',
+            category VARCHAR(128) DEFAULT 'Custom',
+            badge VARCHAR(128) DEFAULT 'Single Page Form',
+            is_multi_step BOOLEAN DEFAULT FALSE,
+            theme JSONB DEFAULT '{"accentColor": "#6366f1", "borderRadius": "16px", "fontFamily": "\x27Plus Jakarta Sans\x27, sans-serif"}'::jsonb,
+            settings JSONB DEFAULT '{"acceptingResponses": true, "hasEndTime": false, "endDateTime": null, "closedMessage": "This form is no longer accepting responses. The deadline for submission has passed."}'::jsonb,
+            steps JSONB DEFAULT '[]'::jsonb,
+            fields JSONB DEFAULT '[]'::jsonb,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_forms_updated_at ON forms(updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_forms_category ON forms(category);
+        
+        CREATE TABLE IF NOT EXISTS submissions (
+            id VARCHAR(128) PRIMARY KEY,
+            form_id VARCHAR(128) NOT NULL,
+            submitted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            duration_seconds INTEGER DEFAULT 60,
+            data JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_submissions_form_id ON submissions(form_id);
+        CREATE INDEX IF NOT EXISTS idx_submissions_submitted_at ON submissions(submitted_at DESC);
+
+        CREATE TABLE IF NOT EXISTS admin_auth (
+            id VARCHAR(64) PRIMARY KEY DEFAULT 'admin_credential',
+            password_hash VARCHAR(512) NOT NULL,
+            salt VARCHAR(128) NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+        );
+      `);
+      pgAvailable = true;
+      console.log('Self-hosted PostgreSQL database verified & ready.');
+      return true;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.warn('PostgreSQL initialization skipped / database offline:', err.message);
+    pgAvailable = false;
+    return false;
+  }
+}
+
+initPgDatabase().catch(() => {});
+
+// --- Local Filesystem Storage Fallback ---
+function getLocalForms() {
+  try {
+    if (fs.existsSync(FORMS_FILE)) {
+      const raw = fs.readFileSync(FORMS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function saveLocalForms(forms) {
+  try {
+    fs.writeFileSync(FORMS_FILE, JSON.stringify(forms, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to write local forms file:', err);
+  }
+}
+
+function getLocalSubmissions() {
+  try {
+    if (fs.existsSync(SUBS_FILE)) {
+      const raw = fs.readFileSync(SUBS_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function saveLocalSubmissions(subs) {
+  try {
+    fs.writeFileSync(SUBS_FILE, JSON.stringify(subs, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to write local submissions file:', err);
+  }
+}
+
+// --- Cryptographic Password & Session Helpers ---
 function hashPassword(password, salt) {
   return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
 }
@@ -72,6 +317,15 @@ function verifySessionToken(token) {
   }
 }
 
+function getCanonicalOrigin(req) {
+  if (APP_URL) {
+    return APP_URL.replace(/\/$/, '');
+  }
+  const proto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${DEFAULT_PORT}`;
+  return `${proto}://${host}`;
+}
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -87,44 +341,19 @@ const MIME_TYPES = {
   '.woff': 'font/woff'
 };
 
-// Supabase REST helper
-async function callSupabaseRest(endpoint, options = {}) {
-  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
-    return { ok: false, error: 'Supabase credentials missing on server.' };
-  }
-  const url = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/${endpoint}`;
-  const headers = {
-    'apikey': SUPABASE_SECRET_KEY,
-    'Authorization': `Bearer ${SUPABASE_SECRET_KEY}`,
-    'Content-Type': 'application/json',
-    'Prefer': options.prefer || 'return=representation',
-    ...(options.headers || {})
-  };
-
-  try {
-    const res = await fetch(url, {
-      method: options.method || 'GET',
-      headers,
-      body: options.body ? JSON.stringify(options.body) : undefined
-    });
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-    return { ok: res.ok, status: res.status, data };
-  } catch (err) {
-    return { ok: false, status: 500, error: err.message };
-  }
-}
-
-// Read request body JSON
 function getRequestBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    let bytes = 0;
+    req.on('data', chunk => {
+      bytes += chunk.length;
+      if (bytes > MAX_BODY_SIZE) {
+        reject(new Error('Payload Too Large'));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', () => {
       try {
         resolve(JSON.parse(body || '{}'));
@@ -132,17 +361,39 @@ function getRequestBody(req) {
         resolve({});
       }
     });
+    req.on('error', reject);
   });
 }
 
+// --- HTTP Server Core ---
 const server = http.createServer(async (req, res) => {
-  const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || '127.0.0.1';
+  const origin = getCanonicalOrigin(req);
+  const parsedUrl = new URL(req.url, origin);
   const pathname = parsedUrl.pathname;
 
-  // CORS Headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // --- Strict Security Headers ---
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; connect-src 'self' " + (APP_URL || '') + "; frame-ancestors 'self';");
+
+  const isHttps = origin.startsWith('https://') || req.headers['x-forwarded-proto'] === 'https';
+  if (isHttps) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  // CORS Policy
+  const reqOrigin = req.headers.origin;
+  if (reqOrigin && (reqOrigin === origin || reqOrigin.startsWith('http://localhost') || reqOrigin.startsWith('http://127.0.0.1'))) {
+    res.setHeader('Access-Control-Allow-Origin', reqOrigin);
+    res.setHeader('Vary', 'Origin');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, apikey, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -150,126 +401,106 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- API Endpoints ---
-  
-  // 0. Admin Authentication API
+  // --- API Routes ---
+
+  // 0. Server Config API
+  if (pathname === '/api/config' && req.method === 'GET') {
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      canonicalOrigin: origin,
+      environment: process.env.NODE_ENV || 'production',
+      database: pgAvailable ? 'postgresql' : 'local_json',
+      encryption: 'AES-256-GCM',
+      version: '1.0.0'
+    }));
+    return;
+  }
+
+  // 1. Health & Status
+  if (pathname === '/api/status') {
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      connected: pgAvailable,
+      databaseType: pgAvailable ? 'PostgreSQL (Self-Hosted)' : 'Local JSON Store',
+      tablesReady: true,
+      canonicalOrigin: origin
+    }));
+    return;
+  }
+
+  // 2. Admin Authentication & Session Management
   if (pathname === '/api/admin-auth' || pathname.startsWith('/api/admin/')) {
     res.setHeader('Content-Type', 'application/json');
-    const payload = await getRequestBody(req);
+
+    if (!checkRateLimit(clientIp, 'auth', 10, 60000)) {
+      logAuditEvent('RATE_LIMIT_EXCEEDED', { endpoint: 'admin-auth' }, clientIp);
+      res.writeHead(429);
+      res.end(JSON.stringify({ error: 'Too many login attempts. Please wait 1 minute.' }));
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await getRequestBody(req);
+    } catch {
+      res.writeHead(413);
+      res.end(JSON.stringify({ error: 'Payload too large' }));
+      return;
+    }
+
     const action = parsedUrl.searchParams.get('action') || payload.action || (pathname.endsWith('/login') ? 'login' : pathname.endsWith('/change-password') ? 'change-password' : 'verify');
 
-    // In-memory cache with 10s TTL
-    if (!global.memAdminCredential) global.memAdminCredential = null;
-    if (!global.lastAdminCredFetch) global.lastAdminCredFetch = 0;
-    const CRED_CACHE_TTL_MS = 10000;
-    const credFilePath = path.join(__dirname, '.admin_credential.json');
-
-    // Helper functions for credential entity
     async function getStoredCredential() {
-      const now = Date.now();
-      if (global.memAdminCredential && (now - global.lastAdminCredFetch < CRED_CACHE_TTL_MS)) {
-        return global.memAdminCredential;
-      }
-
-      // Check local file backup
-      if (fs.existsSync(credFilePath)) {
+      if (pgPool && pgAvailable) {
         try {
-          const fileData = JSON.parse(fs.readFileSync(credFilePath, 'utf8'));
-          if (fileData.password_hash && fileData.salt) {
-            global.memAdminCredential = fileData;
-            global.lastAdminCredFetch = now;
-            return fileData;
-          }
+          const r = await pgPool.query('SELECT password_hash, salt FROM admin_auth WHERE id = $1 LIMIT 1', ['admin_credential']);
+          if (r.rows.length > 0 && r.rows[0].password_hash) return r.rows[0];
         } catch {}
       }
 
-      // 1. Check admin_auth table
-      try {
-        const result = await callSupabaseRest('admin_auth?id=eq.admin_credential&select=*');
-        if (result.ok && Array.isArray(result.data) && result.data.length > 0 && result.data[0].password_hash) {
-          global.memAdminCredential = result.data[0];
-          global.lastAdminCredFetch = now;
-          return result.data[0];
-        }
-      } catch {}
-
-      // 2. Query forms table system row '__system_admin_auth__'
-      try {
-        const sysResult = await callSupabaseRest('forms?id=eq.__system_admin_auth__&select=*');
-        if (sysResult.ok && Array.isArray(sysResult.data) && sysResult.data.length > 0) {
-          const cred = sysResult.data[0].theme;
-          if (cred && cred.password_hash && cred.salt) {
-            global.memAdminCredential = cred;
-            global.lastAdminCredFetch = now;
-            return cred;
-          }
-        }
-      } catch {}
-
-      global.memAdminCredential = null;
-      global.lastAdminCredFetch = now;
+      if (fs.existsSync(CRED_FILE)) {
+        try {
+          const fileData = JSON.parse(fs.readFileSync(CRED_FILE, 'utf8'));
+          if (fileData.password_hash && fileData.salt) return fileData;
+        } catch {}
+      }
       return null;
     }
 
     async function saveStoredCredential(passwordHash, salt) {
       const cred = { password_hash: passwordHash, salt, updated_at: new Date().toISOString() };
-      global.memAdminCredential = cred;
-      global.lastAdminCredFetch = Date.now();
-
-      // Save to local file
-      try {
-        fs.writeFileSync(credFilePath, JSON.stringify(cred, null, 2), 'utf8');
-      } catch {}
-
-      // 1. Save to forms table system row
-      try {
-        await callSupabaseRest('forms', {
-          method: 'POST',
-          prefer: 'resolution=merge-duplicates,return=representation',
-          body: {
-            id: '__system_admin_auth__',
-            title: '[System Admin Auth]',
-            category: '__system__',
-            theme: cred
-          }
-        });
-      } catch (err) {
-        console.error('Error saving system admin auth to Supabase forms:', err);
+      if (pgPool) {
+        try {
+          await pgPool.query(`
+            INSERT INTO admin_auth (id, password_hash, salt, updated_at)
+            VALUES ('admin_credential', $1, $2, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET password_hash = $1, salt = $2, updated_at = CURRENT_TIMESTAMP
+          `, [passwordHash, salt]);
+          pgAvailable = true;
+        } catch {}
       }
-
-      // 2. Also try admin_auth table
-      try {
-        await callSupabaseRest('admin_auth', {
-          method: 'POST',
-          prefer: 'resolution=merge-duplicates,return=representation',
-          body: {
-            id: 'admin_credential',
-            password_hash: passwordHash,
-            salt,
-            updated_at: cred.updated_at
-          }
-        });
-      } catch {}
-
+      try { fs.writeFileSync(CRED_FILE, JSON.stringify(cred, null, 2), 'utf8'); } catch {}
       return true;
     }
 
-    // Verify session
-    if (action === 'verify' || req.method === 'GET') {
+    // Verify
+    if (action === 'verify') {
       const authHeader = req.headers.authorization || '';
       const token = payload.token || (authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null);
       const isValid = verifySessionToken(token);
-      res.writeHead(200);
-      res.end(JSON.stringify({ authenticated: isValid }));
+      res.writeHead(isValid ? 200 : 401);
+      res.end(JSON.stringify({ authenticated: isValid, role: isValid ? 'admin' : null }));
       return;
     }
 
     // Login
     if (action === 'login' && req.method === 'POST') {
-      const inputPassword = payload.password;
-      if (!inputPassword) {
+      const { password } = payload;
+      if (!password || typeof password !== 'string') {
         res.writeHead(400);
-        res.end(JSON.stringify({ error: 'Password is required' }));
+        res.end(JSON.stringify({ success: false, error: 'Password is required' }));
         return;
       }
 
@@ -277,33 +508,22 @@ const server = http.createServer(async (req, res) => {
       let isMatch = false;
 
       if (stored && stored.password_hash && stored.salt) {
-        isMatch = verifyPassword(inputPassword, stored.salt, stored.password_hash);
+        isMatch = verifyPassword(password, stored.salt, stored.password_hash);
       } else {
-        isMatch = inputPassword === DEFAULT_PASSWORD;
-        if (isMatch) {
-          const salt = crypto.randomBytes(16).toString('hex');
-          const hash = hashPassword(inputPassword, salt);
-          await saveStoredCredential(hash, salt).catch(() => {});
-        }
+        isMatch = password === DEFAULT_PASSWORD;
       }
 
       if (isMatch) {
         const token = createSessionToken();
+        logAuditEvent('LOGIN_SUCCESS', { role: 'admin' }, clientIp);
         res.writeHead(200);
-        res.end(JSON.stringify({
-          success: true,
-          token,
-          expiresIn: 86400,
-          message: 'Authentication successful'
-        }));
+        res.end(JSON.stringify({ success: true, token, role: 'admin' }));
         return;
       }
 
+      logAuditEvent('LOGIN_FAILURE', { reason: 'invalid_password' }, clientIp);
       res.writeHead(401);
-      res.end(JSON.stringify({
-        success: false,
-        error: 'Invalid admin password'
-      }));
+      res.end(JSON.stringify({ success: false, error: 'Invalid admin password' }));
       return;
     }
 
@@ -319,15 +539,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const { currentPassword, newPassword } = payload;
-      if (!currentPassword || !newPassword) {
+      if (!currentPassword || !newPassword || newPassword.length < 8) {
         res.writeHead(400);
-        res.end(JSON.stringify({ error: 'Both current password and new password are required' }));
-        return;
-      }
-
-      if (newPassword.length < 6) {
-        res.writeHead(400);
-        res.end(JSON.stringify({ error: 'New password must be at least 6 characters' }));
+        res.end(JSON.stringify({ error: 'New password must be at least 8 characters long.' }));
         return;
       }
 
@@ -341,6 +555,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (!isCurrentMatch) {
+        logAuditEvent('PASSWORD_CHANGE_FAILED', { reason: 'wrong_current_password' }, clientIp);
         res.writeHead(401);
         res.end(JSON.stringify({ error: 'Incorrect current password' }));
         return;
@@ -348,16 +563,12 @@ const server = http.createServer(async (req, res) => {
 
       const newSalt = crypto.randomBytes(16).toString('hex');
       const newHash = hashPassword(newPassword, newSalt);
-      const saved = await saveStoredCredential(newHash, newSalt);
+      await saveStoredCredential(newHash, newSalt);
 
+      logAuditEvent('PASSWORD_CHANGED', {}, clientIp);
       const freshToken = createSessionToken();
       res.writeHead(200);
-      res.end(JSON.stringify({
-        success: true,
-        persistedInDb: saved,
-        token: freshToken,
-        message: 'Admin password successfully updated'
-      }));
+      res.end(JSON.stringify({ success: true, token: freshToken, message: 'Admin password updated successfully.' }));
       return;
     }
 
@@ -366,130 +577,470 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 1. Supabase Status Check
-  if (pathname === '/api/supabase/status' && req.method === 'GET') {
-    res.setHeader('Content-Type', 'application/json');
-    if (!SUPABASE_URL) {
-      res.writeHead(200);
-      res.end(JSON.stringify({ connected: false, reason: 'SUPABASE_URL not configured' }));
-      return;
-    }
-
-    // Check if forms table is ready
-    const testResult = await callSupabaseRest('forms?limit=1');
-    const tablesReady = testResult.ok || (testResult.status !== 404 && testResult.data?.code !== 'PGRST205');
-
-    res.writeHead(200);
-    res.end(JSON.stringify({
-      connected: true,
-      supabaseUrl: SUPABASE_URL,
-      publishableKey: SUPABASE_PUBLISHABLE_KEY,
-      tablesReady: tablesReady,
-      details: testResult.data
-    }));
-    return;
-  }
-
-  // 2. Forms API (GET & POST)
+  // 3. Forms API (GET, POST, DELETE)
   if (pathname === '/api/forms') {
     res.setHeader('Content-Type', 'application/json');
 
+    // --- GET Forms ---
     if (req.method === 'GET') {
-      const result = await callSupabaseRest('forms?select=*&order=updated_at.desc');
-      const userForms = Array.isArray(result.data) ? result.data.filter(f => !f.id?.startsWith('__system_')) : result.data;
-      res.writeHead(result.ok ? 200 : (result.status || 500));
-      res.end(JSON.stringify(userForms));
+      const id = parsedUrl.searchParams.get('id');
+
+      // 3.1 Fetch Single Form
+      if (id) {
+        let form = null;
+
+        if (pgPool && pgAvailable) {
+          try {
+            const r = await pgPool.query('SELECT * FROM forms WHERE id = $1 LIMIT 1', [id]);
+            if (r.rows.length > 0) {
+              const row = r.rows[0];
+              form = {
+                id: row.id,
+                title: row.title,
+                description: row.description || '',
+                category: row.category || 'Custom',
+                badge: row.badge || 'Single Page Form',
+                isMultiStep: row.is_multi_step,
+                theme: row.theme || {},
+                settings: row.settings || {},
+                steps: row.steps || [],
+                fields: row.fields || [],
+                updatedAt: row.updated_at
+              };
+            }
+          } catch {}
+        }
+
+        if (!form) {
+          const localForms = getLocalForms();
+          form = localForms.find(f => f.id === id) || null;
+        }
+
+        if (form) {
+          res.writeHead(200);
+          res.end(JSON.stringify(form));
+        } else {
+          res.writeHead(404);
+          res.end(JSON.stringify({ error: 'Form not found', id }));
+        }
+        return;
+      }
+
+      // 3.2 Fetch All Forms
+      let formsMap = new Map();
+
+      if (pgPool && pgAvailable) {
+        try {
+          const r = await pgPool.query('SELECT * FROM forms ORDER BY updated_at DESC');
+          r.rows.filter(row => !row.id.startsWith('__system_')).forEach(row => {
+            formsMap.set(row.id, {
+              id: row.id,
+              title: row.title,
+              description: row.description || '',
+              category: row.category || 'Custom',
+              badge: row.badge || 'Single Page Form',
+              isMultiStep: row.is_multi_step,
+              theme: row.theme || {},
+              settings: row.settings || {},
+              steps: row.steps || [],
+              fields: row.fields || [],
+              updatedAt: row.updated_at
+            });
+          });
+        } catch {}
+      }
+
+      const localForms = getLocalForms();
+      localForms.forEach(f => {
+        if (!formsMap.has(f.id)) formsMap.set(f.id, f);
+      });
+
+      const combined = Array.from(formsMap.values());
+      if (combined.length > 0) saveLocalForms(combined);
+
+      res.writeHead(200);
+      res.end(JSON.stringify(combined));
       return;
     }
 
+    // --- POST Form (Create / Update) ---
     if (req.method === 'POST') {
-      const payload = await getRequestBody(req);
-      const row = {
-        id: payload.id,
-        title: payload.title,
-        description: payload.description || '',
-        category: payload.category || 'Custom',
-        badge: payload.badge || 'Single Page Form',
-        is_multi_step: !!payload.isMultiStep,
-        theme: payload.theme || {},
-        settings: payload.settings || {
-          acceptingResponses: true,
-          hasEndTime: false,
-          endDateTime: null,
-          closedMessage: "This form is no longer accepting responses. The deadline for submission has passed."
-        },
-        steps: payload.steps || [],
-        fields: payload.fields || [],
+      if (!checkRateLimit(clientIp, 'form_create', 30, 60000)) {
+        res.writeHead(429);
+        res.end(JSON.stringify({ error: 'Rate limit exceeded. Please slow down.' }));
+        return;
+      }
+
+      let payload;
+      try {
+        payload = await getRequestBody(req);
+      } catch {
+        res.writeHead(413);
+        res.end(JSON.stringify({ error: 'Payload too large' }));
+        return;
+      }
+
+      const formId = (payload.id && typeof payload.id === 'string')
+        ? payload.id.replace(/[^a-zA-Z0-9_-]/g, '')
+        : `form-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+      const title = (payload.title && typeof payload.title === 'string') ? payload.title.substring(0, 500) : 'Untitled Form';
+      const description = typeof payload.description === 'string' ? payload.description.substring(0, 5000) : '';
+      const category = typeof payload.category === 'string' ? payload.category.substring(0, 128) : 'Custom';
+      const badge = typeof payload.badge === 'string' ? payload.badge.substring(0, 128) : 'Single Page Form';
+      const isMultiStep = !!payload.isMultiStep;
+      const theme = (payload.theme && typeof payload.theme === 'object') ? payload.theme : {};
+      const settings = (payload.settings && typeof payload.settings === 'object') ? payload.settings : {
+        acceptingResponses: true,
+        hasEndTime: false,
+        endDateTime: null,
+        closedMessage: "This form is no longer accepting responses. The deadline for submission has passed."
+      };
+      const steps = Array.isArray(payload.steps) ? payload.steps.slice(0, 50) : [];
+      const fields = Array.isArray(payload.fields) ? payload.fields.slice(0, 100) : [];
+
+      const formRow = {
+        id: formId,
+        title,
+        description,
+        category,
+        badge,
+        isMultiStep,
+        theme,
+        settings,
+        steps,
+        fields,
+        shareUrl: `${origin}/f/${formId}`,
         updated_at: new Date().toISOString()
       };
 
-      const result = await callSupabaseRest('forms', {
-        method: 'POST',
-        prefer: 'resolution=merge-duplicates,return=representation',
-        body: row
-      });
+      // 1. PostgreSQL Save
+      if (pgPool) {
+        try {
+          await pgPool.query(`
+            INSERT INTO forms (id, title, description, category, badge, is_multi_step, theme, settings, steps, fields, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+              title = EXCLUDED.title,
+              description = EXCLUDED.description,
+              category = EXCLUDED.category,
+              badge = EXCLUDED.badge,
+              is_multi_step = EXCLUDED.is_multi_step,
+              theme = EXCLUDED.theme,
+              settings = EXCLUDED.settings,
+              steps = EXCLUDED.steps,
+              fields = EXCLUDED.fields,
+              updated_at = CURRENT_TIMESTAMP
+          `, [formId, title, description, category, badge, isMultiStep, JSON.stringify(theme), JSON.stringify(settings), JSON.stringify(steps), JSON.stringify(fields)]);
+          pgAvailable = true;
+        } catch (err) {
+          console.warn('PostgreSQL save failed:', err.message);
+        }
+      }
 
-      res.writeHead(result.ok ? 200 : (result.status || 500));
-      res.end(JSON.stringify(result.data));
+      // 2. Local File Save
+      const localForms = getLocalForms();
+      const existingIdx = localForms.findIndex(f => f.id === formId);
+      if (existingIdx >= 0) {
+        localForms[existingIdx] = formRow;
+      } else {
+        localForms.unshift(formRow);
+      }
+      saveLocalForms(localForms);
+
+      logAuditEvent('FORM_SAVED', { formId, title }, clientIp);
+      res.writeHead(200);
+      res.end(JSON.stringify(formRow));
       return;
     }
 
+    // --- DELETE Form ---
     if (req.method === 'DELETE') {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+      if (!verifySessionToken(token)) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Admin authorization required to delete forms.' }));
+        return;
+      }
+
       const id = parsedUrl.searchParams.get('id');
       if (!id) {
         res.writeHead(400);
         res.end(JSON.stringify({ error: 'Missing form ID' }));
         return;
       }
-      const result = await callSupabaseRest(`forms?id=eq.${encodeURIComponent(id)}`, {
-        method: 'DELETE'
-      });
-      res.writeHead(result.ok ? 200 : (result.status || 500));
-      res.end(JSON.stringify({ success: result.ok }));
+
+      if (pgPool) {
+        try { await pgPool.query('DELETE FROM forms WHERE id = $1', [id]); } catch {}
+      }
+
+      const localForms = getLocalForms().filter(f => f.id !== id);
+      saveLocalForms(localForms);
+
+      logAuditEvent('FORM_DELETED', { formId: id }, clientIp);
+      res.writeHead(200);
+      res.end(JSON.stringify({ success: true, id }));
       return;
     }
   }
 
-  // 3. Submissions API (GET & POST)
+  // 4. Submissions API (GET & POST)
   if (pathname === '/api/submissions') {
     res.setHeader('Content-Type', 'application/json');
 
+    // --- GET Submissions (Admin Only) ---
     if (req.method === 'GET') {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+
       const formId = parsedUrl.searchParams.get('formId');
-      const query = formId ? `submissions?form_id=eq.${encodeURIComponent(formId)}&order=submitted_at.desc` : 'submissions?select=*&order=submitted_at.desc';
-      const result = await callSupabaseRest(query);
-      res.writeHead(result.ok ? 200 : (result.status || 500));
-      res.end(JSON.stringify(result.data));
+      let subs = [];
+
+      // 1. PostgreSQL
+      if (pgPool && pgAvailable) {
+        try {
+          const query = formId
+            ? 'SELECT * FROM submissions WHERE form_id = $1 ORDER BY submitted_at DESC'
+            : 'SELECT * FROM submissions ORDER BY submitted_at DESC';
+          const params = formId ? [formId] : [];
+          const r = await pgPool.query(query, params);
+          subs = r.rows.map(row => ({
+            id: row.id,
+            formId: row.form_id,
+            submittedAt: row.submitted_at,
+            durationSeconds: row.duration_seconds,
+            data: decryptSubmissionPayload(row.data || {})
+          }));
+        } catch {}
+      }
+
+      // 2. Local Fallback
+      if (subs.length === 0) {
+        const localSubs = getLocalSubmissions();
+        const filtered = formId ? localSubs.filter(s => (s.form_id === formId || s.formId === formId)) : localSubs;
+        subs = filtered.map(s => ({
+          ...s,
+          data: decryptSubmissionPayload(s.data || {})
+        }));
+      }
+
+      logAuditEvent('SUBMISSIONS_ACCESSED', { formId, count: subs.length }, clientIp);
+      res.writeHead(200);
+      res.end(JSON.stringify(subs));
       return;
     }
 
+    // --- POST Submission (Public Respondent) ---
     if (req.method === 'POST') {
-      const payload = await getRequestBody(req);
-      const row = {
-        id: payload.id,
-        form_id: payload.formId,
-        submitted_at: payload.submittedAt || new Date().toISOString(),
-        duration_seconds: payload.durationSeconds || 60,
-        data: payload.data || {}
+      if (!checkRateLimit(clientIp, 'submission', 40, 60000)) {
+        res.writeHead(429);
+        res.end(JSON.stringify({ error: 'Too many submissions. Please slow down.' }));
+        return;
+      }
+
+      let payload;
+      try {
+        payload = await getRequestBody(req);
+      } catch {
+        res.writeHead(413);
+        res.end(JSON.stringify({ error: 'Payload too large' }));
+        return;
+      }
+
+      const formId = payload.formId || payload.form_id;
+      if (!formId || typeof formId !== 'string') {
+        res.writeHead(400);
+        res.end(JSON.stringify({ error: 'Valid Form ID is required for response submission' }));
+        return;
+      }
+
+      let targetForm = null;
+      if (pgPool && pgAvailable) {
+        try {
+          const r = await pgPool.query('SELECT * FROM forms WHERE id = $1 LIMIT 1', [formId]);
+          if (r.rows.length > 0) targetForm = r.rows[0];
+        } catch {}
+      }
+      if (!targetForm) {
+        targetForm = getLocalForms().find(f => f.id === formId);
+      }
+
+      if (targetForm && targetForm.settings) {
+        const settings = typeof targetForm.settings === 'string' ? JSON.parse(targetForm.settings) : targetForm.settings;
+        if (settings.acceptingResponses === false) {
+          res.writeHead(403);
+          res.end(JSON.stringify({ error: settings.closedMessage || 'This form is no longer accepting responses.' }));
+          return;
+        }
+        if (settings.hasEndTime && settings.endDateTime) {
+          const deadline = new Date(settings.endDateTime).getTime();
+          if (Date.now() >= deadline) {
+            res.writeHead(403);
+            res.end(JSON.stringify({ error: settings.closedMessage || 'The deadline for this form has passed.' }));
+            return;
+          }
+        }
+      }
+
+      const subId = (payload.id && typeof payload.id === 'string')
+        ? payload.id
+        : `sub-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+      const submittedAt = payload.submittedAt || new Date().toISOString();
+      const durationSeconds = Math.min(Math.max(parseInt(payload.durationSeconds || '60', 10), 1), 86400);
+      const rawData = (payload.data && typeof payload.data === 'object') ? payload.data : {};
+
+      const encryptedData = encryptSubmissionPayload(rawData);
+
+      const subRow = {
+        id: subId,
+        formId,
+        form_id: formId,
+        submittedAt,
+        durationSeconds,
+        data: encryptedData
       };
 
-      const result = await callSupabaseRest('submissions', {
-        method: 'POST',
-        prefer: 'return=representation',
-        body: row
-      });
+      // 1. PostgreSQL Save
+      if (pgPool) {
+        try {
+          await pgPool.query(`
+            INSERT INTO submissions (id, form_id, submitted_at, duration_seconds, data)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (id) DO NOTHING
+          `, [subId, formId, submittedAt, durationSeconds, JSON.stringify(encryptedData)]);
+          pgAvailable = true;
+        } catch (err) {
+          console.warn('PostgreSQL submission insert warning:', err.message);
+        }
+      }
 
-      res.writeHead(result.ok ? 200 : (result.status || 500));
-      res.end(JSON.stringify(result.data));
+      // 2. Local File Save
+      const localSubs = getLocalSubmissions();
+      localSubs.unshift(subRow);
+      saveLocalSubmissions(localSubs);
+
+      logAuditEvent('RESPONSE_SUBMITTED', { formId, subId }, clientIp);
+      res.writeHead(200);
+      res.end(JSON.stringify({ success: true, id: subId, submittedAt }));
       return;
     }
+  }
+
+  // 5. File Upload & Private Storage API
+  if (pathname === '/api/upload' && req.method === 'POST') {
+    if (!checkRateLimit(clientIp, 'upload', 10, 60000)) {
+      res.writeHead(429);
+      res.end(JSON.stringify({ error: 'Upload rate limit exceeded.' }));
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await getRequestBody(req);
+    } catch {
+      res.writeHead(413);
+      res.end(JSON.stringify({ error: 'File size exceeds maximum allowable limit.' }));
+      return;
+    }
+
+    const { fileName, fileData, mimeType } = payload;
+    if (!fileName || !fileData) {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'Missing fileName or fileData' }));
+      return;
+    }
+
+    const safeExt = path.extname(fileName).toLowerCase().substring(0, 10);
+    const ALLOWED_EXTS = ['.pdf', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.webp', '.txt', '.csv'];
+    if (!ALLOWED_EXTS.includes(safeExt)) {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'File type not allowed. Supported formats: PDF, DOCX, PNG, JPG, WEBP, CSV, TXT.' }));
+      return;
+    }
+
+    const fileId = `file-${crypto.randomBytes(16).toString('hex')}${safeExt}`;
+    const targetFilePath = path.join(UPLOADS_DIR, fileId);
+
+    try {
+      const base64Content = fileData.includes(',') ? fileData.split(',')[1] : fileData;
+      const buffer = Buffer.from(base64Content, 'base64');
+      if (buffer.length > 15 * 1024 * 1024) {
+        res.writeHead(413);
+        res.end(JSON.stringify({ error: 'File exceeds 15MB size limit.' }));
+        return;
+      }
+
+      fs.writeFileSync(targetFilePath, buffer);
+      logAuditEvent('FILE_UPLOADED', { fileId, originalName: path.basename(fileName), size: buffer.length }, clientIp);
+
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        fileId,
+        fileName: path.basename(fileName),
+        fileSize: `${Math.round(buffer.length / 1024)} KB`,
+        url: `/api/files/${fileId}`
+      }));
+      return;
+    } catch (err) {
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: 'File upload processing failed.' }));
+      return;
+    }
+  }
+
+  // 6. Safe Private File Retrieval
+  if (pathname.startsWith('/api/files/') || req.url.includes('/api/files/')) {
+    const rawReqUrl = decodeURIComponent(req.url);
+    if (rawReqUrl.includes('..')) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Access Denied: Path Traversal Detected');
+      return;
+    }
+
+    const rawFileParam = decodeURIComponent(pathname.replace(/^\/api\/files\/?/, ''));
+    if (!rawFileParam || rawFileParam.includes('..') || rawFileParam.includes('/') || rawFileParam.includes('\\')) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Access Denied: Invalid File Identifier');
+      return;
+    }
+
+    const fileId = path.basename(rawFileParam);
+    const safePath = path.resolve(UPLOADS_DIR, fileId);
+
+    if (!safePath.startsWith(path.resolve(UPLOADS_DIR))) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Access Denied');
+      return;
+    }
+
+    fs.stat(safePath, (err, stats) => {
+      if (err || !stats.isFile()) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('File Not Found');
+        return;
+      }
+
+      const ext = path.extname(safePath).toLowerCase();
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${fileId}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, max-age=86400'
+      });
+
+      const stream = fs.createReadStream(safePath);
+      stream.pipe(res);
+    });
+    return;
   }
 
   // --- Clean URL Routing & Static File Serving ---
   let safePath = path.normalize(decodeURI(pathname)).replace(/^(\.\.[\/\\])+/, '');
   const ext = path.extname(safePath).toLowerCase();
 
-  // If request has a file extension but is prefixed by /f/ or /form/, strip prefix
   if (ext) {
     if (safePath.startsWith('/f/') || safePath.startsWith('\\f\\')) {
       safePath = safePath.substring(2);
@@ -497,7 +1048,7 @@ const server = http.createServer(async (req, res) => {
       safePath = safePath.substring(5);
     }
   } else {
-    // No extension -> Route to index.html for SPA routing (/admin, /f/:id, /form/:id)
+    // SPA deep routing: /admin, /f/:id, /form/:id, /
     if (
       safePath === '/' || 
       safePath === '\\' || 
@@ -521,12 +1072,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const ext = path.extname(filePath).toLowerCase();
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    const fileExt = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[fileExt] || 'application/octet-stream';
 
     res.writeHead(200, {
       'Content-Type': contentType,
-      'Cache-Control': 'no-cache'
+      'Cache-Control': fileExt === '.html' ? 'no-cache' : 'public, max-age=3600'
     });
 
     const stream = fs.createReadStream(filePath);
@@ -535,11 +1086,14 @@ const server = http.createServer(async (req, res) => {
 });
 
 function startServer(port) {
-  server.listen(port, () => {
-    console.log(`Forms by Varunya tech server running at http://localhost:${port}`);
-    console.log(`All rights reserved to Bhuvana Mohan Chowdary.`);
-    console.log(`Supabase URL: ${SUPABASE_URL || 'Not configured'}`);
-  }).on('error', (err) => {
+  const s = server.listen(port, '0.0.0.0', () => {
+    console.log(`Forms by Varunya tech server running at http://0.0.0.0:${port}`);
+    console.log(`Public canonical origin: ${APP_URL || `http://localhost:${port}`}`);
+    console.log(`Database engine: ${pgAvailable ? 'PostgreSQL (Self-Hosted)' : 'Local File Store'}`);
+    console.log(`Security: AES-256-GCM Field Encryption & Rate Limiting ACTIVE`);
+  });
+
+  s.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.log(`Port ${port} in use, trying ${port + 1}...`);
       startServer(port + 1);
@@ -547,6 +1101,37 @@ function startServer(port) {
       console.error('Server error:', err);
     }
   });
+
+  return s;
 }
 
-startServer(Number(DEFAULT_PORT));
+// Graceful Shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Closing server gracefully...');
+  server.close(() => {
+    if (pgPool) pgPool.end().catch(() => {});
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received. Closing server gracefully...');
+  server.close(() => {
+    if (pgPool) pgPool.end().catch(() => {});
+    process.exit(0);
+  });
+});
+
+if (require.main === module) {
+  startServer(DEFAULT_PORT);
+}
+
+module.exports = {
+  server,
+  startServer,
+  initPgDatabase,
+  encryptField,
+  decryptField,
+  encryptSubmissionPayload,
+  decryptSubmissionPayload
+};

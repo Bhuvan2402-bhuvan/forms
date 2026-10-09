@@ -4,6 +4,12 @@
   "description": "Forms by Varunya tech. All rights reserved to Bhuvana Mohan Chowdary.",
   "author": "Bhuvana Mohan Chowdary",
   "scripts": {
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "start": "node server.js",
+    "test": "node test/suite.js",
+    "migrate": "node scripts/migrate-to-postgres.js"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
   }
 }

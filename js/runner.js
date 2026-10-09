@@ -23,10 +23,49 @@ export class FormRunner {
     this.render();
 
     store.subscribe((event) => {
-      if (['activeFormChanged', 'formUpdated', 'fieldAdded', 'fieldUpdated', 'fieldDeleted', 'themeUpdated'].includes(event)) {
+      if (['activeFormChanged', 'formsSynced', 'formUpdated', 'fieldAdded', 'fieldUpdated', 'fieldDeleted', 'themeUpdated'].includes(event)) {
         this.render();
       }
     });
+  }
+
+  showLoading(msg = 'Loading Form...') {
+    if (this.runnerProgress) this.runnerProgress.style.display = 'none';
+    if (this.runnerFooter) this.runnerFooter.style.display = 'none';
+    if (this.runnerHeader) this.runnerHeader.style.display = 'none';
+    if (this.runnerFieldsForm) {
+      this.runnerFieldsForm.style.display = 'flex';
+      this.runnerFieldsForm.innerHTML = `
+        <div style="text-align:center;padding:60px 20px;width:100%;">
+          <div style="width:36px;height:36px;border:3px solid var(--border-color);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px;"></div>
+          <h3 style="font-size:1.1rem;font-weight:700;color:var(--text-main);">${msg}</h3>
+          <p style="font-size:0.85rem;color:var(--text-muted);margin-top:4px;">Retrieving application structure and settings...</p>
+        </div>
+      `;
+    }
+  }
+
+  renderNotFound(formId = '') {
+    if (this.runnerProgress) this.runnerProgress.style.display = 'none';
+    if (this.runnerFooter) this.runnerFooter.style.display = 'none';
+    if (this.runnerHeader) this.runnerHeader.style.display = 'none';
+    if (this.runnerFieldsForm) {
+      this.runnerFieldsForm.style.display = 'flex';
+      this.runnerFieldsForm.innerHTML = `
+        <div class="form-closed-view" style="text-align:center;padding:40px 20px;width:100%;">
+          <div class="closed-icon-badge" style="background:rgba(239, 68, 68, 0.12);color:var(--danger);width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:1.8rem;">
+            <i class="ri-error-warning-line"></i>
+          </div>
+          <h2 class="closed-title" style="font-size:1.4rem;font-weight:800;color:var(--text-main);margin-bottom:8px;">Form Not Found</h2>
+          <p class="closed-desc" style="color:var(--text-muted);max-width:440px;margin:0 auto 20px;font-size:0.9rem;">
+            The form you are trying to access ${formId ? `(<code>${formId}</code>)` : ''} does not exist, has been removed, or the link may be incomplete.
+          </p>
+          <a href="/admin" class="btn btn-primary" style="display:inline-flex;align-items:center;gap:6px;padding:8px 18px;text-decoration:none;margin:0 auto;">
+            <i class="ri-dashboard-line"></i> Go to Admin Dashboard
+          </a>
+        </div>
+      `;
+    }
   }
 
   initDeviceSwitcher() {
@@ -66,7 +105,10 @@ export class FormRunner {
 
   render() {
     const form = store.getActiveForm();
-    if (!form) return;
+    if (!form) {
+      this.renderNotFound(store.activeFormId);
+      return;
+    }
 
     // Check if form is accepting responses / deadline
     const accessStatus = store.isFormOpen(form);

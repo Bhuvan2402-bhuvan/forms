@@ -23,25 +23,27 @@ class FormStore {
 
     this.selectedFieldId = null;
     this.activeStepIndex = 0;
-    this.supabaseStatus = { connected: false, tablesReady: false };
-    this.initSupabase();
+    this.canonicalOrigin = window.location.origin;
+    this.initConfig();
+    this.pullRemoteForms();
   }
 
-  async initSupabase() {
+  async initConfig() {
     try {
-      const res = await fetch('/api/supabase/status');
+      const res = await fetch('/api/config');
       if (res.ok) {
-        this.supabaseStatus = await res.json();
-        this.notify('supabaseStatusUpdated', this.supabaseStatus);
-
-        // If tables are ready, pull remote forms or sync local forms
-        if (this.supabaseStatus.tablesReady) {
-          this.pullRemoteForms();
+        const config = await res.json();
+        if (config.canonicalOrigin) {
+          this.canonicalOrigin = config.canonicalOrigin;
+          this.notify('configLoaded', config);
         }
       }
-    } catch (e) {
-      console.log('Supabase check skipped or local mode:', e);
-    }
+    } catch {}
+  }
+
+  getFormUrl(formId) {
+    if (!formId) return '';
+    return `${this.canonicalOrigin}/f/${formId}`;
   }
 
   async pullRemoteForms() {
@@ -49,51 +51,72 @@ class FormStore {
       const res = await fetch('/api/forms');
       if (res.ok) {
         const remoteForms = await res.json();
-        if (Array.isArray(remoteForms) && remoteForms.length > 0) {
-          // Merge remote forms with local
+        if (Array.isArray(remoteForms)) {
           const remoteMapped = remoteForms.filter(rf => !rf.id?.startsWith('__system_')).map(rf => ({
             id: rf.id,
-            title: rf.title,
-            description: rf.description,
-            category: rf.category,
-            badge: rf.badge,
-            isMultiStep: rf.is_multi_step,
-            theme: rf.theme,
-            steps: rf.steps,
-            fields: rf.fields
+            title: rf.title || 'Untitled Form',
+            description: rf.description || '',
+            category: rf.category || 'Custom',
+            badge: rf.badge || 'Single Page Form',
+            isMultiStep: !!rf.is_multi_step,
+            theme: rf.theme || {},
+            settings: rf.settings || { ...DEFAULT_FORM_SETTINGS },
+            steps: rf.steps || [],
+            fields: rf.fields || []
           }));
-          this.forms = remoteMapped;
-          if (!this.forms.some(f => f.id === this.activeFormId)) {
-            this.activeFormId = this.forms[0]?.id || null;
-          }
-          this.saveForms(false); // Don't re-upload
-          this.notify('formsSynced', this.forms);
-        } else if (Array.isArray(remoteForms) && remoteForms.length === 0) {
-          // Seed local forms to cloud
-          for (const f of this.forms) {
-            await this.pushFormToCloud(f);
-          }
-        }
 
-        // Pull or seed submissions
-        const subRes = await fetch('/api/submissions');
-        if (subRes.ok) {
-          const remoteSubs = await subRes.json();
-          if (Array.isArray(remoteSubs) && remoteSubs.length > 0) {
-            this.submissions = remoteSubs.map(rs => ({
-              id: rs.id,
-              formId: rs.form_id,
-              submittedAt: rs.submitted_at,
-              durationSeconds: rs.duration_seconds,
-              data: rs.data
-            }));
-            localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(this.submissions));
-            this.notify('submissionAdded', null);
-          } else if (Array.isArray(remoteSubs) && remoteSubs.length === 0) {
-            for (const s of this.submissions) {
-              await this.pushSubmissionToCloud(s);
+          // Merge preserving all local and remote forms
+          const formMap = new Map();
+          // 1. Add current local forms
+          this.forms.forEach(f => formMap.set(f.id, f));
+          // 2. Merge / add remote forms
+          remoteMapped.forEach(rf => {
+            const existing = formMap.get(rf.id);
+            if (existing) {
+              formMap.set(rf.id, { ...existing, ...rf, settings: { ...DEFAULT_FORM_SETTINGS, ...(existing.settings || {}), ...(rf.settings || {}) } });
+            } else {
+              formMap.set(rf.id, rf);
+            }
+          });
+
+          this.forms = Array.from(formMap.values());
+
+          // Push any local forms that weren't on server
+          for (const localForm of this.forms) {
+            if (!remoteMapped.some(rf => rf.id === localForm.id)) {
+              this.pushFormToCloud(localForm).catch(() => {});
             }
           }
+
+          // Maintain activeFormId if valid
+          if (this.activeFormId && !this.forms.some(f => f.id === this.activeFormId)) {
+            this.activeFormId = this.forms[0]?.id || null;
+          }
+
+          this.saveForms(false);
+          this.notify('formsSynced', this.forms);
+        }
+      }
+
+      // Pull or seed submissions
+      const subRes = await fetch('/api/submissions');
+      if (subRes.ok) {
+        const remoteSubs = await subRes.json();
+        if (Array.isArray(remoteSubs) && remoteSubs.length > 0) {
+          const subMap = new Map();
+          this.submissions.forEach(s => subMap.set(s.id, s));
+          remoteSubs.forEach(rs => {
+            subMap.set(rs.id, {
+              id: rs.id,
+              formId: rs.form_id || rs.formId,
+              submittedAt: rs.submitted_at || rs.submittedAt,
+              durationSeconds: rs.duration_seconds || rs.durationSeconds || 60,
+              data: rs.data || {}
+            });
+          });
+          this.submissions = Array.from(subMap.values());
+          localStorage.setItem(STORAGE_KEYS.SUBMISSIONS, JSON.stringify(this.submissions));
+          this.notify('submissionAdded', null);
         }
       }
     } catch (e) {
@@ -102,15 +125,17 @@ class FormStore {
   }
 
   async pushFormToCloud(form) {
-    if (!this.supabaseStatus.connected || !this.supabaseStatus.tablesReady) return;
+    if (!form || !form.id) return;
     try {
-      await fetch('/api/forms', {
+      const res = await fetch('/api/forms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       });
+      return res.ok;
     } catch (e) {
-      console.warn('Failed to push form to Supabase:', e);
+      console.warn('Failed to push form to backend:', e);
+      return false;
     }
   }
 
@@ -123,7 +148,7 @@ class FormStore {
       });
       return res.ok;
     } catch (e) {
-      console.warn('Failed to push submission to Supabase:', e);
+      console.warn('Failed to push submission to backend:', e);
       return false;
     }
   }
@@ -132,8 +157,40 @@ class FormStore {
     if (!formId) return null;
     let form = this.forms.find(f => f.id === formId);
     if (form) return form;
+
     try {
-      const res = await fetch(`/api/forms`);
+      // 1. Try single form endpoint
+      let res = await fetch(`/api/forms?id=${encodeURIComponent(formId)}`);
+      if (res.ok) {
+        const found = await res.json();
+        if (found && found.id === formId) {
+          form = {
+            id: found.id,
+            title: found.title || 'Untitled Form',
+            description: found.description || '',
+            category: found.category || 'Custom',
+            badge: found.badge || 'Single Page Form',
+            isMultiStep: !!found.is_multi_step,
+            theme: found.theme || {},
+            settings: found.settings || { ...DEFAULT_FORM_SETTINGS },
+            steps: found.steps || [],
+            fields: found.fields || []
+          };
+          const existingIdx = this.forms.findIndex(f => f.id === form.id);
+          if (existingIdx >= 0) {
+            this.forms[existingIdx] = form;
+          } else {
+            this.forms.push(form);
+          }
+          this.saveForms(false);
+          this.setActiveForm(form.id);
+          this.notify('formsSynced', this.forms);
+          return form;
+        }
+      }
+
+      // 2. Try fetching all forms
+      res = await fetch(`/api/forms`);
       if (res.ok) {
         const remoteForms = await res.json();
         if (Array.isArray(remoteForms)) {
@@ -141,19 +198,25 @@ class FormStore {
           if (found) {
             form = {
               id: found.id,
-              title: found.title,
-              description: found.description,
-              category: found.category,
-              badge: found.badge,
-              isMultiStep: found.is_multi_step,
+              title: found.title || 'Untitled Form',
+              description: found.description || '',
+              category: found.category || 'Custom',
+              badge: found.badge || 'Single Page Form',
+              isMultiStep: !!found.is_multi_step,
               theme: found.theme || {},
               settings: found.settings || { ...DEFAULT_FORM_SETTINGS },
               steps: found.steps || [],
               fields: found.fields || []
             };
-            this.forms.push(form);
+            const existingIdx = this.forms.findIndex(f => f.id === form.id);
+            if (existingIdx >= 0) {
+              this.forms[existingIdx] = form;
+            } else {
+              this.forms.push(form);
+            }
             this.saveForms(false);
             this.setActiveForm(form.id);
+            this.notify('formsSynced', this.forms);
             return form;
           }
         }
@@ -314,20 +377,26 @@ class FormStore {
   }
 
   getActiveForm() {
-    return this.forms.find(f => f.id === this.activeFormId) || this.forms[0] || null;
+    if (this.activeFormId) {
+      const found = this.forms.find(f => f.id === this.activeFormId);
+      if (found) return found;
+    }
+    return this.forms[0] || null;
   }
 
   setActiveForm(id) {
-    if (this.forms.some(f => f.id === id)) {
-      this.activeFormId = id;
-      this.selectedFieldId = null;
-      this.activeStepIndex = 0;
-      this.notify('activeFormChanged', this.getActiveForm());
-    }
+    if (!id) return;
+    this.activeFormId = id;
+    try {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_FORM_ID, id);
+    } catch {}
+    this.selectedFieldId = null;
+    this.activeStepIndex = 0;
+    this.notify('activeFormChanged', this.getActiveForm());
   }
 
   createNewForm(template = null) {
-    const newId = 'form-' + Date.now();
+    const newId = 'form-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
     let newForm;
 
     if (template) {
@@ -383,6 +452,8 @@ class FormStore {
     this.activeFormId = newId;
     this.selectedFieldId = newForm.fields[0]?.id || null;
     this.activeStepIndex = 0;
+    this.saveForms(true, true);
+    this.pushFormToCloud(newForm).catch(() => {});
     this.notify('formCreated', newForm);
     return newForm;
   }
@@ -453,10 +524,8 @@ class FormStore {
       this.activeFormId = this.forms[0]?.id || null;
     }
 
-    // Delete in cloud
-    if (this.supabaseStatus?.connected) {
-      fetch(`/api/forms?id=${encodeURIComponent(formId)}`, { method: 'DELETE' }).catch(() => {});
-    }
+    // Delete in backend
+    fetch(`/api/forms?id=${encodeURIComponent(formId)}`, { method: 'DELETE' }).catch(() => {});
 
     this.notify('formDeleted', formId);
   }

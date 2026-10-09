@@ -24,7 +24,7 @@ export class FormAnalytics {
     this.render();
 
     store.subscribe((event) => {
-      if (['submissionAdded', 'submissionDeleted', 'activeFormChanged', 'formUpdated'].includes(event)) {
+      if (['submissionAdded', 'submissionDeleted', 'activeFormChanged', 'formsSynced', 'formUpdated'].includes(event)) {
         this.render();
       }
     });

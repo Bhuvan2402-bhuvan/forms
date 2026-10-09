@@ -2462,7 +2462,6 @@ body.standalone-respondent-mode .runner-card {
    Hide ALL creator functions: Builder, Live Runner, Responses & Analytics, Templates, Form Selector, Share, Cloud sync */
 body:not(.admin-authenticated):not(.standalone-respondent-mode) .nav-center,
 body:not(.admin-authenticated):not(.standalone-respondent-mode) #active-form-selector-btn,
-body:not(.admin-authenticated):not(.standalone-respondent-mode) #btn-supabase-modal,
 body:not(.admin-authenticated):not(.standalone-respondent-mode) .status-pill,
 body:not(.admin-authenticated):not(.standalone-respondent-mode) #btn-share-form,
 body:not(.admin-authenticated):not(.standalone-respondent-mode) #btn-open-schema,

@@ -34,16 +34,12 @@ class App {
 
     // Listen to store updates
     store.subscribe((event) => {
-      if (['activeFormChanged', 'formCreated', 'formImported', 'formUpdated'].includes(event)) {
+      if (['activeFormChanged', 'formsSynced', 'formCreated', 'formImported', 'formUpdated'].includes(event)) {
         this.updateActiveFormLabel();
-      }
-      if (event === 'supabaseStatusUpdated') {
-        this.updateSupabaseModalUI();
       }
     });
 
     this.updateActiveFormLabel();
-    this.updateSupabaseModalUI();
   }
 
   handleUrlRouting() {
@@ -62,20 +58,37 @@ class App {
     }
 
     if (targetFormId) {
+      // Enable standalone respondent view (hides studio builder controls)
+      document.body.classList.add('standalone-respondent-mode');
+      store.activeFormId = targetFormId;
+
       const exists = store.forms.some(f => f.id === targetFormId);
       if (exists) {
         store.setActiveForm(targetFormId);
+        document.querySelector('.nav-tab-btn[data-view="runner"]')?.click();
+        if (this.runner) {
+          this.runner.resetFormState();
+          this.runner.render();
+        }
       } else {
+        document.querySelector('.nav-tab-btn[data-view="runner"]')?.click();
+        if (this.runner) {
+          this.runner.showLoading('Loading application...');
+        }
         store.loadRemoteFormIfNeeded(targetFormId).then(loaded => {
           if (loaded) {
             store.setActiveForm(loaded.id);
-            if (this.runner) this.runner.render();
+            if (this.runner) {
+              this.runner.resetFormState();
+              this.runner.render();
+            }
+          } else {
+            if (this.runner) {
+              this.runner.renderNotFound(targetFormId);
+            }
           }
         });
       }
-      // Enable standalone respondent view (hides studio builder controls)
-      document.body.classList.add('standalone-respondent-mode');
-      document.querySelector('.nav-tab-btn[data-view="runner"]')?.click();
       return;
     }
 
@@ -231,7 +244,7 @@ class App {
       const form = store.getActiveForm();
       if (!form || !shareModal) return;
 
-      const shareUrl = `${window.location.origin}/f/${form.id}`;
+      const shareUrl = store.getFormUrl(form.id);
 
       if (shareUrlInput) shareUrlInput.value = shareUrl;
       if (embedCodeArea) {
@@ -279,48 +292,6 @@ class App {
       }
     });
 
-    // Supabase Cloud Integration Modal
-    const supabaseBtn = document.getElementById('btn-supabase-modal');
-    const supabaseModal = document.getElementById('supabase-modal');
-    const supabaseSqlPreview = document.getElementById('supabase-sql-preview');
-    const btnCopySql = document.getElementById('btn-copy-sql');
-    const btnCheckSync = document.getElementById('btn-check-supabase-sync');
-
-    // Preload SQL schema
-    fetch('/supabase_schema.sql')
-      .then(r => r.text())
-      .then(sql => {
-        if (supabaseSqlPreview) supabaseSqlPreview.value = sql;
-      })
-      .catch(() => {});
-
-    supabaseBtn?.addEventListener('click', () => {
-      supabaseModal?.classList.add('show');
-      this.updateSupabaseModalUI();
-    });
-
-    btnCopySql?.addEventListener('click', () => {
-      if (supabaseSqlPreview) {
-        navigator.clipboard.writeText(supabaseSqlPreview.value).then(() => {
-          this.showToast('SQL Schema copied to clipboard!', 'success');
-        });
-      }
-    });
-
-    btnCheckSync?.addEventListener('click', async () => {
-      btnCheckSync.disabled = true;
-      btnCheckSync.innerHTML = '<i class="ri-loader-4-line ri-spin"></i> Checking...';
-      await store.initSupabase();
-      btnCheckSync.disabled = false;
-      btnCheckSync.innerHTML = '<i class="ri-refresh-line"></i> Test & Sync Now';
-      this.updateSupabaseModalUI();
-      if (store.supabaseStatus.tablesReady) {
-        this.showToast('Connected & Cloud Sync Active!', 'success');
-      } else {
-        this.showToast('Connected to Supabase! Please run SQL in Dashboard.', 'info');
-      }
-    });
-
     // Generic modal closers
     document.querySelectorAll('.btn-close-modal').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -333,46 +304,6 @@ class App {
         if (e.target === overlay) overlay.classList.remove('show');
       });
     });
-  }
-
-  updateSupabaseModalUI() {
-    const badge = document.getElementById('supabase-modal-badge');
-    const navLabel = document.getElementById('supabase-nav-label');
-    const navIcon = document.getElementById('supabase-status-icon');
-    const alertBox = document.getElementById('supabase-schema-alert');
-
-    if (store.supabaseStatus?.connected) {
-      if (store.supabaseStatus.tablesReady) {
-        if (badge) {
-          badge.textContent = 'Cloud Sync Active';
-          badge.style.background = 'rgba(16, 185, 129, 0.15)';
-          badge.style.color = 'var(--success)';
-        }
-        if (navLabel) navLabel.textContent = 'Cloud Synced';
-        if (navIcon) navIcon.style.color = 'var(--success)';
-        if (alertBox) {
-          alertBox.style.background = 'rgba(16, 185, 129, 0.08)';
-          alertBox.style.borderColor = 'rgba(16, 185, 129, 0.2)';
-          alertBox.innerHTML = `
-            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--success);margin-bottom:4px;">
-              <i class="ri-checkbox-circle-fill"></i>
-              <span>PostgreSQL Tables Ready & Synced</span>
-            </div>
-            <p style="font-size:0.83rem;color:var(--text-muted);">
-              Your forms and application responses are now stored in Supabase PostgreSQL in real-time.
-            </p>
-          `;
-        }
-      } else {
-        if (badge) {
-          badge.textContent = 'Setup Needed';
-          badge.style.background = 'rgba(245, 158, 11, 0.15)';
-          badge.style.color = 'var(--warning)';
-        }
-        if (navLabel) navLabel.textContent = 'Supabase Setup';
-        if (navIcon) navIcon.style.color = 'var(--warning)';
-      }
-    }
   }
 
   setupTemplatesGallery() {

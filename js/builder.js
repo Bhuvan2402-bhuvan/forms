@@ -28,7 +28,7 @@ export class FormBuilder {
 
     // Listen to store changes with typing guard
     store.subscribe((event, payload) => {
-      if (['activeFormChanged', 'formCreated', 'formImported', 'formUpdated', 'fieldAdded', 'fieldUpdated', 'fieldDuplicated', 'fieldDeleted', 'fieldsReordered', 'stepAdded', 'stepDeleted', 'themeUpdated'].includes(event)) {
+      if (['activeFormChanged', 'formsSynced', 'formCreated', 'formImported', 'formUpdated', 'fieldAdded', 'fieldUpdated', 'fieldDuplicated', 'fieldDeleted', 'fieldsReordered', 'stepAdded', 'stepDeleted', 'themeUpdated'].includes(event)) {
         if (this.isUserTyping()) {
           this.pendingRender = true;
           return;
@@ -748,7 +748,7 @@ export class FormBuilder {
     }
 
     const settings = form.settings || {};
-    const uniqueUrl = `${window.location.origin}/f/${form.id}`;
+    const uniqueUrl = store.getFormUrl(form.id);
 
     // Format ISO string to datetime-local input value (YYYY-MM-DDTHH:MM)
     let localDatetimeVal = '';

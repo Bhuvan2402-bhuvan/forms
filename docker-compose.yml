@@ -1,0 +1,54 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: formcraft_app
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3005}:3005"
+    environment:
+      - NODE_ENV=production
+      - PORT=3005
+      - APP_URL=${APP_URL:-http://localhost:3005}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-formcraft}:${POSTGRES_PASSWORD:-formcraft_secret_2026}@postgres:5432/${POSTGRES_DB:-formcraft_db}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - ADMIN_SECRET=${ADMIN_SECRET:-formcraft_production_secret_key_2026}
+    volumes:
+      - ${APP_DATA_PATH:-./data}:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - formcraft_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3005/api/config"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: formcraft_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-formcraft_db}
+      - POSTGRES_USER=${POSTGRES_USER:-formcraft}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-formcraft_secret_2026}
+    volumes:
+      - ${APP_POSTGRES_DATA_PATH:-./postgres_data}:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    # Note: PostgreSQL port is NOT exposed to the host for maximum security
+    networks:
+      - formcraft_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-formcraft} -d ${POSTGRES_DB:-formcraft_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+networks:
+  formcraft_network:
+    driver: bridge

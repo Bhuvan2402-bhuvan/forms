@@ -26,7 +26,7 @@
 
         <div class="active-form-selector" id="active-form-selector-btn" title="Switch or Manage Forms">
           <i class="ri-folder-shared-line" style="color:var(--primary);"></i>
-          <span id="active-form-name-label">Senior Software Engineer Application</span>
+          <span id="active-form-name-label">Loading Form...</span>
           <i class="ri-arrow-down-s-line" style="font-size:0.8rem;color:var(--text-light);"></i>
         </div>
       </div>
@@ -62,10 +62,6 @@
           <span>Admin Locked</span>
         </div>
 
-        <button class="btn btn-outline" id="btn-supabase-modal" title="Supabase Cloud Sync & Settings">
-          <i class="ri-database-2-line" id="supabase-status-icon" style="color:var(--success);"></i>
-          <span id="supabase-nav-label">Supabase</span>
-        </button>
 
         <div class="status-pill">
           <div class="status-indicator"></div>
@@ -683,58 +679,6 @@
       </div>
     </div>
 
-    <!-- Supabase Cloud Integration Modal -->
-    <div class="modal-overlay" id="supabase-modal">
-      <div class="modal-window" style="max-width:640px;">
-        <div class="modal-header">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div class="logo-badge" style="width:30px;height:30px;font-size:1.1rem;background:#3ecf8e;">
-              <i class="ri-database-2-line"></i>
-            </div>
-            <h3>Supabase Cloud Integration</h3>
-          </div>
-          <button class="field-action-btn btn-close-modal"><i class="ri-close-line"></i></button>
-        </div>
-        <div class="modal-body" style="display:flex;flex-direction:column;gap:16px;">
-          <div style="background:var(--bg-subtle);padding:14px;border-radius:var(--radius-md);border:1px solid var(--border-light);display:flex;flex-direction:column;gap:8px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;">Connected Project URL</span>
-              <span class="badge-tag" id="supabase-modal-badge" style="background:rgba(16, 185, 129, 0.15);color:var(--success);">Connected</span>
-            </div>
-            <code style="font-size:0.85rem;font-family:var(--font-mono);color:var(--primary);word-break:break-all;" id="supabase-url-display">https://brfhqgdvyqustbjndrex.supabase.co</code>
-          </div>
-
-          <div id="supabase-schema-alert" style="background:rgba(99, 102, 241, 0.08);border:1px solid rgba(99, 102, 241, 0.2);padding:14px;border-radius:var(--radius-md);">
-            <div style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--primary);margin-bottom:6px;">
-              <i class="ri-information-line"></i>
-              <span>One-Time PostgreSQL Setup</span>
-            </div>
-            <p style="font-size:0.83rem;color:var(--text-muted);line-height:1.5;">
-              To enable cloud persistence for your forms and responses, execute the database schema in your Supabase SQL Editor.
-            </p>
-            <div style="display:flex;gap:10px;margin-top:10px;">
-              <button class="btn btn-primary" id="btn-copy-sql" style="font-size:0.8rem;padding:6px 12px;">
-                <i class="ri-file-copy-line"></i> Copy SQL Schema
-              </button>
-              <a href="https://supabase.com/dashboard/project/brfhqgdvyqustbjndrex/sql" target="_blank" rel="noopener" class="btn btn-outline" style="font-size:0.8rem;padding:6px 12px;">
-                <i class="ri-external-link-line"></i> Open Supabase SQL Editor
-              </a>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label>SQL Schema Preview (forms & submissions tables)</label>
-            <textarea id="supabase-sql-preview" class="form-control" rows="6" readonly style="font-family:var(--font-mono);font-size:0.78rem;line-height:1.4;"></textarea>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-outline btn-close-modal">Close</button>
-          <button class="btn btn-primary" id="btn-check-supabase-sync">
-            <i class="ri-refresh-line"></i> Test & Sync Now
-          </button>
-        </div>
-      </div>
-    </div>
 
     <!-- Submission Inspection Modal -->
     <div class="modal-overlay" id="submission-detail-modal">
