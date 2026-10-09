@@ -244,9 +244,12 @@ async function runTests() {
     failedCount++;
   } finally {
     if (serverInstance) {
-      serverInstance.close();
+      serverInstance.close(() => {
+        process.exit(failedCount === 0 ? 0 : 1);
+      });
+    } else {
+      process.exit(failedCount === 0 ? 0 : 1);
     }
-    process.exit(failedCount === 0 ? 0 : 1);
   }
 }
 
